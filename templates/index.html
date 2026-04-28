@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nifty 50 ATM Options Premium Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f1117;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 6px;
+            color: #fff;
+            font-size: 1.5rem;
+        }
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 20px;
+            font-size: 0.85rem;
+        }
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .controls label { color: #aaa; font-size: 0.85rem; }
+        .controls select, .controls button {
+            background: #1a1d27;
+            color: #e0e0e0;
+            border: 1px solid #333;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+        .controls button {
+            background: #2563eb;
+            border-color: #2563eb;
+            color: #fff;
+            font-weight: 600;
+        }
+        .controls button:hover { background: #1d4ed8; }
+        .controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+        #loading {
+            text-align: center;
+            padding: 60px;
+            color: #888;
+            font-size: 1.1rem;
+        }
+        .spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid #333;
+            border-top-color: #2563eb;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #error {
+            text-align: center;
+            padding: 20px;
+            color: #ef4444;
+            display: none;
+        }
+        #market-note {
+            text-align: center;
+            padding: 12px 20px;
+            margin-bottom: 16px;
+            background: #1a1500;
+            border: 1px solid #4a3800;
+            border-radius: 6px;
+            color: #f59e0b;
+            font-size: 0.85rem;
+            display: none;
+        }
+        .table-wrapper {
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.82rem;
+        }
+        th {
+            background: #1a1d27;
+            color: #aaa;
+            padding: 10px 12px;
+            text-align: right;
+            border-bottom: 2px solid #333;
+            position: sticky;
+            top: 0;
+            white-space: nowrap;
+            cursor: pointer;
+            user-select: none;
+        }
+        th:first-child, td:first-child { text-align: left; }
+        th:hover { color: #fff; }
+        td {
+            padding: 8px 12px;
+            text-align: right;
+            border-bottom: 1px solid #1e2130;
+            white-space: nowrap;
+        }
+        tr:hover { background: #1a1d27; }
+        .symbol { font-weight: 600; color: #fff; }
+        .ltp { color: #60a5fa; }
+        .premium-high { color: #f59e0b; font-weight: 600; }
+        .premium-pct { color: #10b981; font-weight: 700; }
+        .rank { color: #555; }
+        .expiry-header { background: #14162a; }
+        .lot-size { color: #888; }
+        .row-type-badge {
+            display: inline-block;
+            font-size: 0.65rem;
+            font-weight: 600;
+            padding: 1px 6px;
+            border-radius: 3px;
+            margin-right: 6px;
+            text-transform: uppercase;
+            vertical-align: middle;
+        }
+        .row-type-badge.index { background: #0b2a4a; color: #60a5fa; }
+        .row-type-badge.equity { background: #1e2130; color: #888; }
+    </style>
+</head>
+<body>
+    <h1>NSE ATM Options Premium</h1>
+    <p class="subtitle">Live ATM call &amp; put premiums across indexes and Nifty/BankNifty stocks, sorted by call % of LTP | Source: <span id="data-source">...</span></p>
+    <div style="text-align:center; margin-bottom:16px; font-size:0.85rem;">
+        <a href="/" style="color:#60a5fa;">Live Dashboard</a> | <a href="/backtest" style="color:#60a5fa;">Backtester</a> | <a href="/guide" style="color:#60a5fa;">Guide</a>
+    </div>
+
+    <div id="market-note"></div>
+
+    <div class="controls">
+        <label>Expiry:</label>
+        <select id="expiry-select"><option value="">Loading...</option></select>
+        <label>Show:</label>
+        <select id="type-filter">
+            <option value="all">All</option>
+            <option value="index">Indexes only</option>
+            <option value="equity">Stocks only</option>
+        </select>
+        <button id="refresh-btn" onclick="fetchData()">Refresh</button>
+        <span id="last-updated" style="color:#555; font-size:0.8rem;"></span>
+    </div>
+
+    <div id="loading"><span class="spinner"></span>Fetching live data from NSE (may take a few seconds)...</div>
+    <div id="error"></div>
+    <div class="table-wrapper">
+        <table id="data-table" style="display:none;">
+            <thead>
+                <tr id="header-row"></tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+        </table>
+    </div>
+
+    <script>
+        let allData = null;
+        let allExpiries = [];
+        let currentSortExpiry = null;
+        let sortKey = 'ce_pct';
+        let sortDir = 'desc';
+
+        function setSort(key) {
+            if (sortKey === key) {
+                sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+            } else {
+                sortKey = key;
+                sortDir = key === 'symbol' ? 'asc' : 'desc';
+            }
+            renderTable();
+        }
+        window.setSort = setSort;
+
+        function sortArrow(key) {
+            if (sortKey !== key) return '<span style="color:#444;">⇅</span>';
+            return sortDir === 'desc' ? '▼' : '▲';
+        }
+
+        async function fetchData() {
+            const btn = document.getElementById('refresh-btn');
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            const table = document.getElementById('data-table');
+            const marketNote = document.getElementById('market-note');
+
+            btn.disabled = true;
+            loading.style.display = 'block';
+            error.style.display = 'none';
+            table.style.display = 'none';
+            marketNote.style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/data');
+                const json = await resp.json();
+                if (json.status !== 'success') throw new Error(json.message || 'Unknown error');
+
+                allData = json.data;
+                allExpiries = json.all_expiries;
+
+                // Show market note if present
+                if (json.market_note) {
+                    marketNote.textContent = json.market_note;
+                    marketNote.style.display = 'block';
+                }
+
+                populateExpirySelect();
+                renderTable();
+
+                const src = json.source === 'kite' ? 'Zerodha Kite (paid)' : 'NSE India (free)';
+                document.getElementById('data-source').textContent = src;
+                document.getElementById('last-updated').textContent =
+                    'Updated: ' + new Date().toLocaleTimeString();
+            } catch (e) {
+                error.textContent = 'Error: ' + e.message;
+                error.style.display = 'block';
+            } finally {
+                loading.style.display = 'none';
+                btn.disabled = false;
+            }
+        }
+
+        function populateExpirySelect() {
+            const sel = document.getElementById('expiry-select');
+            const usedExpiries = new Set();
+            allData.forEach(stock => {
+                stock.expiries.forEach(e => usedExpiries.add(e.expiry));
+            });
+            const filtered = allExpiries.filter(e => usedExpiries.has(e));
+
+            sel.innerHTML = '';
+            if (filtered.length === 0) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = 'No expiry data (market closed)';
+                sel.appendChild(opt);
+                currentSortExpiry = null;
+                return;
+            }
+            filtered.forEach((exp, i) => {
+                const opt = document.createElement('option');
+                opt.value = exp;
+                opt.textContent = exp;
+                if (i === 0) opt.selected = true;
+                sel.appendChild(opt);
+            });
+            currentSortExpiry = filtered[0] || null;
+            sel.onchange = () => { currentSortExpiry = sel.value; renderTable(); };
+            // Wire up the type filter too (idempotent — reassigning handler is fine)
+            document.getElementById('type-filter').onchange = () => renderTable();
+        }
+
+        function renderTable() {
+            if (!allData) return;
+            const table = document.getElementById('data-table');
+            const headerRow = document.getElementById('header-row');
+            const tbody = document.getElementById('table-body');
+
+            const usedExpiries = new Set();
+            allData.forEach(stock => stock.expiries.forEach(e => usedExpiries.add(e.expiry)));
+            const availableExpiries = allExpiries.filter(e => usedExpiries.has(e));
+            const hasOptions = availableExpiries.length > 0;
+            const sortExp = currentSortExpiry && usedExpiries.has(currentSortExpiry)
+                ? currentSortExpiry
+                : availableExpiries[0];
+
+            // If current sortKey refers to an option column but options aren't available, fall back
+            if (!hasOptions && ['ce_price', 'pe_price', 'ce_pct'].includes(sortKey)) {
+                sortKey = 'symbol';
+                sortDir = 'asc';
+            }
+
+            // Build header
+            headerRow.innerHTML = `
+                <th>#</th>
+                <th onclick="setSort('symbol')">Symbol ${sortArrow('symbol')}</th>
+                <th onclick="setSort('ltp')">LTP ${sortArrow('ltp')}</th>
+            `;
+            if (hasOptions) {
+                headerRow.innerHTML += `
+                    <th onclick="setSort('ce_price')">ATM Call Premium ${sortArrow('ce_price')}</th>
+                    <th onclick="setSort('pe_price')">ATM Put Premium ${sortArrow('pe_price')}</th>
+                    <th onclick="setSort('ce_pct')">Call % of LTP ${sortArrow('ce_pct')}</th>
+                `;
+            }
+            headerRow.innerHTML += '<th>Details</th>';
+
+            const getValue = (stock) => {
+                if (sortKey === 'symbol') return stock.symbol;
+                if (sortKey === 'ltp') return stock.ltp;
+                const ed = stock.expiries.find(e => e.expiry === sortExp);
+                if (!ed) return null;
+                // Derive ce_pct from price/ltp when serving stale cache that
+                // predates the backend adding this field.
+                if (sortKey === 'ce_pct' && ed.ce_pct == null) {
+                    return stock.ltp > 0 ? (ed.ce_price / stock.ltp) * 100 : null;
+                }
+                return ed[sortKey];
+            };
+
+            const typeFilter = document.getElementById('type-filter').value;
+            const filtered = allData.filter(stock => {
+                if (typeFilter === 'all') return true;
+                return (stock.type || 'equity') === typeFilter;
+            });
+
+            const sorted = filtered.sort((a, b) => {
+                const av = getValue(a);
+                const bv = getValue(b);
+                // Push nulls to the bottom regardless of direction
+                if (av == null && bv == null) return 0;
+                if (av == null) return 1;
+                if (bv == null) return -1;
+                let cmp;
+                if (typeof av === 'string') cmp = av.localeCompare(bv);
+                else cmp = av - bv;
+                return sortDir === 'desc' ? -cmp : cmp;
+            });
+
+            // Build rows
+            tbody.innerHTML = '';
+            sorted.forEach((stock, idx) => {
+                const rowType = stock.type || 'equity';
+                const badge = `<span class="row-type-badge ${rowType}">${rowType === 'index' ? 'IDX' : 'STK'}</span>`;
+                let row = `
+                    <td class="rank">${idx + 1}</td>
+                    <td class="symbol">${badge}${stock.symbol}</td>
+                    <td class="ltp">${stock.ltp.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                `;
+                if (hasOptions) {
+                    const ed = stock.expiries.find(e => e.expiry === sortExp);
+                    if (ed) {
+                        // ce_pct may be missing on stale cached rows — derive on the fly
+                        const cePct = ed.ce_pct != null
+                            ? ed.ce_pct
+                            : (stock.ltp > 0 ? (ed.ce_price / stock.ltp) * 100 : 0);
+                        row += `
+                            <td class="premium-high">${(ed.ce_price ?? 0).toFixed(2)}</td>
+                            <td class="premium-high">${(ed.pe_price ?? 0).toFixed(2)}</td>
+                            <td class="premium-pct">${cePct.toFixed(2)}%</td>
+                        `;
+                    } else {
+                        row += '<td>-</td><td>-</td><td>-</td>';
+                    }
+                }
+                row += `<td><a href="/stock/${encodeURIComponent(stock.symbol)}">View →</a></td>`;
+                const tr = document.createElement('tr');
+                tr.innerHTML = row;
+                tbody.appendChild(tr);
+            });
+
+            table.style.display = 'table';
+        }
+
+        fetchData();
+    </script>
+</body>
+</html>

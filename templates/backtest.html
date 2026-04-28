@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Strategy Backtester</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f1117;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+        a { color: #60a5fa; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        h1 { text-align: center; margin-bottom: 4px; color: #fff; font-size: 1.5rem; }
+        .subtitle { text-align: center; color: #888; margin-bottom: 20px; font-size: 0.85rem; }
+        .nav { text-align: center; margin-bottom: 20px; font-size: 0.85rem; }
+
+        .layout { display: flex; gap: 20px; max-width: 1400px; margin: 0 auto; }
+        .sidebar {
+            width: 320px;
+            flex-shrink: 0;
+            background: #161822;
+            border: 1px solid #222;
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .main { flex: 1; min-width: 0; }
+
+        .form-group { margin-bottom: 14px; }
+        .form-group label {
+            display: block;
+            color: #aaa;
+            font-size: 0.78rem;
+            margin-bottom: 4px;
+            font-weight: 500;
+        }
+        .form-group select, .form-group input {
+            width: 100%;
+            background: #1a1d27;
+            color: #e0e0e0;
+            border: 1px solid #333;
+            padding: 7px 10px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+        .form-group input[type="range"] { padding: 0; }
+        .range-value { color: #60a5fa; font-weight: 600; float: right; }
+
+        button.run {
+            width: 100%;
+            background: #2563eb;
+            border: none;
+            color: #fff;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+        button.run:hover { background: #1d4ed8; }
+        button.run:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .section-title {
+            color: #888;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 16px 0 10px;
+            border-bottom: 1px solid #222;
+            padding-bottom: 4px;
+        }
+
+        /* Summary cards */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background: #161822;
+            border: 1px solid #222;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        .card .value {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #fff;
+        }
+        .card .value.positive { color: #10b981; }
+        .card .value.negative { color: #ef4444; }
+        .card .label { font-size: 0.72rem; color: #888; margin-top: 2px; }
+
+        /* Charts */
+        .chart-container {
+            background: #161822;
+            border: 1px solid #222;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+        .chart-container canvas { max-height: 300px; }
+
+        /* Trades table */
+        .table-wrapper { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+        th {
+            background: #1a1d27;
+            color: #aaa;
+            padding: 8px 10px;
+            text-align: right;
+            border-bottom: 2px solid #333;
+            position: sticky;
+            top: 0;
+            white-space: nowrap;
+        }
+        th:first-child, td:first-child { text-align: left; }
+        td {
+            padding: 6px 10px;
+            text-align: right;
+            border-bottom: 1px solid #1e2130;
+            white-space: nowrap;
+        }
+        tr:hover { background: #1a1d27; }
+        .pos { color: #10b981; }
+        .neg { color: #ef4444; }
+
+        /* Tooltips */
+        [data-tip] {
+            position: relative;
+            cursor: help;
+        }
+        [data-tip]::after {
+            content: attr(data-tip);
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1a1d27;
+            color: #d0d0d0;
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 0.75rem;
+            font-weight: 400;
+            line-height: 1.4;
+            white-space: normal;
+            width: max-content;
+            max-width: 280px;
+            z-index: 100;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        }
+        [data-tip]:hover::after {
+            opacity: 1;
+        }
+        /* For cards, position tooltip below */
+        .card[data-tip]::after {
+            bottom: auto;
+            top: calc(100% + 6px);
+        }
+        /* Help icon after label text */
+        .form-group label .help-icon {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #333;
+            color: #888;
+            font-size: 0.65rem;
+            text-align: center;
+            line-height: 14px;
+            margin-left: 4px;
+            vertical-align: middle;
+            cursor: help;
+        }
+
+        #loading-bt {
+            text-align: center;
+            padding: 40px;
+            color: #888;
+            display: none;
+        }
+        .spinner {
+            display: inline-block;
+            width: 20px; height: 20px;
+            border: 3px solid #333;
+            border-top-color: #2563eb;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #results { display: none; }
+        .strategy-desc {
+            background: #0d1520;
+            border: 1px solid #1e3a5f;
+            border-radius: 6px;
+            padding: 10px 14px;
+            margin-bottom: 16px;
+            color: #93c5fd;
+            font-size: 0.82rem;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <h1>Strategy Backtester</h1>
+    <p class="subtitle">Backtest options strategies on Nifty 50 stocks using historical data + Black-Scholes pricing</p>
+    <div class="nav"><a href="/">Live Dashboard</a> | <a href="/backtest">Backtester</a> | <a href="/guide">Guide</a></div>
+
+    <div class="layout">
+        <!-- Sidebar: Config -->
+        <div class="sidebar">
+            <div class="form-group" data-tip="The stock or index to backtest. NIFTY 50 uses the index — ideal for collar strategies with high liquidity.">
+                <label>Stock Symbol <span class="help-icon">?</span></label>
+                <select id="symbol">
+                    <option value="NIFTY 50" selected>NIFTY 50 (Index)</option>
+                    <option value="ADANIPORTS">ADANIPORTS</option>
+                    <option value="APOLLOHOSP">APOLLOHOSP</option>
+                    <option value="ASIANPAINT">ASIANPAINT</option>
+                    <option value="AXISBANK">AXISBANK</option>
+                    <option value="BAJAJ-AUTO">BAJAJ-AUTO</option>
+                    <option value="BAJFINANCE">BAJFINANCE</option>
+                    <option value="BAJAJFINSV">BAJAJFINSV</option>
+                    <option value="BPCL">BPCL</option>
+                    <option value="BHARTIARTL">BHARTIARTL</option>
+                    <option value="BRITANNIA">BRITANNIA</option>
+                    <option value="CIPLA">CIPLA</option>
+                    <option value="COALINDIA">COALINDIA</option>
+                    <option value="DIVISLAB">DIVISLAB</option>
+                    <option value="DRREDDY">DRREDDY</option>
+                    <option value="EICHERMOT">EICHERMOT</option>
+                    <option value="GRASIM">GRASIM</option>
+                    <option value="HCLTECH">HCLTECH</option>
+                    <option value="HDFCBANK">HDFCBANK</option>
+                    <option value="HDFCLIFE">HDFCLIFE</option>
+                    <option value="HEROMOTOCO">HEROMOTOCO</option>
+                    <option value="HINDALCO">HINDALCO</option>
+                    <option value="HINDUNILVR">HINDUNILVR</option>
+                    <option value="ICICIBANK">ICICIBANK</option>
+                    <option value="INDUSINDBK">INDUSINDBK</option>
+                    <option value="INFY">INFY</option>
+                    <option value="ITC">ITC</option>
+                    <option value="JSWSTEEL">JSWSTEEL</option>
+                    <option value="KOTAKBANK">KOTAKBANK</option>
+                    <option value="LT">LT</option>
+                    <option value="M&M">M&M</option>
+                    <option value="MARUTI">MARUTI</option>
+                    <option value="NESTLEIND">NESTLEIND</option>
+                    <option value="NTPC">NTPC</option>
+                    <option value="ONGC">ONGC</option>
+                    <option value="POWERGRID">POWERGRID</option>
+                    <option value="RELIANCE">RELIANCE</option>
+                    <option value="SBILIFE">SBILIFE</option>
+                    <option value="SBIN">SBIN</option>
+                    <option value="SHRIRAMFIN">SHRIRAMFIN</option>
+                    <option value="SUNPHARMA">SUNPHARMA</option>
+                    <option value="TCS">TCS</option>
+                    <option value="TATACONSUM">TATACONSUM</option>
+                    <option value="TATAMOTORS">TATAMOTORS</option>
+                    <option value="TATASTEEL">TATASTEEL</option>
+                    <option value="TECHM">TECHM</option>
+                    <option value="TITAN">TITAN</option>
+                    <option value="TRENT">TRENT</option>
+                    <option value="ULTRACEMCO">ULTRACEMCO</option>
+                    <option value="WIPRO">WIPRO</option>
+                    <option value="ETERNAL">ETERNAL</option>
+                </select>
+            </div>
+            <div class="form-group" data-tip="Which trading strategy to run. Each strategy has its own parameters and entry/exit rules.">
+                <label>Strategy <span class="help-icon">?</span></label>
+                <select id="strategy"></select>
+            </div>
+            <div class="form-group" data-tip="How far back to fetch price data. Longer periods give more trades but may include very different market conditions.">
+                <label>History Period <span class="help-icon">?</span></label>
+                <select id="period">
+                    <option value="1y">1 Year</option>
+                    <option value="2y" selected>2 Years</option>
+                    <option value="5y">5 Years</option>
+                </select>
+            </div>
+
+            <div class="section-title">Strategy Parameters</div>
+            <div id="param-container"></div>
+
+            <button class="run" id="run-btn" onclick="runBacktest()">Run Backtest</button>
+        </div>
+
+        <!-- Main: Results -->
+        <div class="main">
+            <div id="loading-bt"><span class="spinner"></span>Running backtest...</div>
+
+            <div id="results">
+                <div id="strategy-desc" class="strategy-desc"></div>
+
+                <div class="summary-grid" id="summary-cards"></div>
+
+                <div class="chart-container">
+                    <canvas id="equity-chart"></canvas>
+                </div>
+
+                <div class="chart-container">
+                    <canvas id="price-chart"></canvas>
+                </div>
+
+                <h3 style="color:#aaa; font-size:0.85rem; margin-bottom:10px;">Trade Log</h3>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Month</th>
+                                <th>Entry</th>
+                                <th>Exit</th>
+                                <th>Days</th>
+                                <th>Entry Price</th>
+                                <th>Exit Price</th>
+                                <th>Call K</th>
+                                <th>Call Prem</th>
+                                <th>Put K</th>
+                                <th>Put Prem</th>
+                                <th>Net Credit</th>
+                                <th>Credit %</th>
+                                <th>IV</th>
+                                <th>P&L</th>
+                                <th>P&L %</th>
+                            </tr>
+                        </thead>
+                        <tbody id="trade-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="placeholder" style="text-align:center; padding:80px 20px; color:#555;">
+                Configure parameters and click "Run Backtest" to see results.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let strategies = {};
+        let equityChart = null;
+        let priceChart = null;
+
+        // Tooltips for strategy parameters
+        const paramTips = {
+            'min_premium_pct': 'Skip the month if net credit (call premium - put premium) as % of stock price is below this. Higher = fewer but better trades. Try 0.75-1.0% for NIFTY.',
+            'call_scan_min_pct': 'Start scanning call strikes from this % above the stock price. 0% = start from ATM.',
+            'call_scan_max_pct': 'Scan call strikes up to this % above the stock price. Wider range = more candidates evaluated.',
+            'call_objective': 'How to pick the best call strike from the scan range. "Max net credit" matches typical manual trading. See the Guide for details on each.',
+            'put_offset_pct': 'How far below stock price to place the protective put. Higher = cheaper put but less protection. 5% is standard.',
+            'iv_mode': 'How to determine implied vol for pricing. "Fixed IV" lets you set it directly (e.g., 35% = typical India VIX). "VRP" multiplies historical vol by a factor.',
+            'fixed_iv_pct': 'Set the implied volatility directly. This is what you see in the option chain. NIFTY typical: 12-18% (calm), 20-35% (normal), 35-50% (volatile). Try 30-40% to match real 3-5% call premiums.',
+            'iv_premium_pct': 'In VRP mode: how much higher implied vol is vs historical vol. 50% means if hist vol = 12%, pricing uses 18%. Need 200%+ for realistic NIFTY premiums.',
+            'min_iv': 'Only enter trades when historical volatility exceeds this level. 0 = always enter. Use to filter out low-vol months with thin premiums.',
+            'lot_size': 'Number of lots for P&L scaling. Multiplies absolute P&L but not percentage returns.',
+        };
+
+        // Tooltips for result summary cards
+        const cardTips = {
+            'Months Traded': 'How many months had enough premium to enter a trade, out of total months in the data period.',
+            'Months Skipped': 'Months where net credit was below the minimum threshold, so no position was taken. Some skipping is healthy.',
+            'Win Rate': 'Percentage of trades that made money. Collars typically have 65-80% win rates — you profit when stock stays within the collar range.',
+            'Avg Monthly Return': 'Average P&L % per trade. This is your expected monthly income. Target: 0.5-1.5% for NIFTY collars.',
+            'Avg Net Credit': 'Average premium collected (call - put) as % of stock price. This is your "income" before stock movement. Higher = more cushion.',
+            'Annualized Return': 'Avg monthly return × 12. Assumes you run the strategy every eligible month.',
+            'Sharpe Ratio': 'Risk-adjusted return: (avg return / std dev) × √12. Above 1.0 is good, above 2.0 is excellent. Below 0 = losing money.',
+            'Best Trade': 'Single best monthly P&L %. Usually when stock rose slightly and call expired worthless.',
+            'Worst Trade': 'Single worst monthly P&L %. Usually when stock had a sharp drop beyond put protection.',
+            'Max Drawdown': 'Largest cumulative loss from peak to trough (absolute). Shows the worst losing streak in the backtest period.',
+            'Avg IV at Entry': 'Average historical volatility when trades were entered. Higher IV means richer premiums were available.',
+            'Avg Days Held': 'Average trading days per position. Monthly strategy = typically 20-23 days.',
+        };
+
+        async function loadStrategies() {
+            const resp = await fetch('/api/strategies');
+            strategies = await resp.json();
+            const sel = document.getElementById('strategy');
+            sel.innerHTML = '';
+            for (const [key, val] of Object.entries(strategies)) {
+                const opt = document.createElement('option');
+                opt.value = key;
+                opt.textContent = val.name + ' - ' + val.description;
+                sel.appendChild(opt);
+            }
+            sel.onchange = () => renderParams(sel.value);
+            renderParams(sel.value);
+        }
+
+        function renderParams(strategyName) {
+            const container = document.getElementById('param-container');
+            const params = strategies[strategyName]?.params || [];
+            container.innerHTML = '';
+            params.forEach(p => {
+                const div = document.createElement('div');
+                div.className = 'form-group';
+                const tip = paramTips[p.name] || '';
+                if (tip) div.setAttribute('data-tip', tip);
+                const helpIcon = tip ? ' <span class="help-icon">?</span>' : '';
+                if (p.type === 'choice') {
+                    const options = (p.choices || []).map((c, idx) => {
+                        const label = p.choice_labels ? p.choice_labels[idx] : c;
+                        const sel = c === p.default ? 'selected' : '';
+                        return `<option value="${c}" ${sel}>${label}</option>`;
+                    }).join('');
+                    div.innerHTML = `
+                        <label>${p.label}${helpIcon}</label>
+                        <select id="param-${p.name}">${options}</select>
+                    `;
+                } else if (p.type === 'float' || p.type === 'int') {
+                    div.innerHTML = `
+                        <label>${p.label}${helpIcon} <span class="range-value" id="val-${p.name}">${p.default}</span></label>
+                        <input type="range" id="param-${p.name}"
+                            min="${p.min}" max="${p.max}" step="${p.step}" value="${p.default}"
+                            oninput="document.getElementById('val-${p.name}').textContent=this.value">
+                    `;
+                }
+                container.appendChild(div);
+            });
+        }
+
+        function getParams() {
+            const strategyName = document.getElementById('strategy').value;
+            const schema = strategies[strategyName]?.params || [];
+            const params = {};
+            schema.forEach(p => {
+                const el = document.getElementById(`param-${p.name}`);
+                if (!el) return;
+                if (p.type === 'int') params[p.name] = parseInt(el.value);
+                else if (p.type === 'float') params[p.name] = parseFloat(el.value);
+                else params[p.name] = el.value;
+            });
+            return params;
+        }
+
+        async function runBacktest() {
+            const btn = document.getElementById('run-btn');
+            const loading = document.getElementById('loading-bt');
+            const results = document.getElementById('results');
+            const placeholder = document.getElementById('placeholder');
+
+            btn.disabled = true;
+            loading.style.display = 'block';
+            results.style.display = 'none';
+            placeholder.style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/backtest', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        symbol: document.getElementById('symbol').value,
+                        strategy: document.getElementById('strategy').value,
+                        params: getParams(),
+                        period: document.getElementById('period').value,
+                    }),
+                });
+                const data = await resp.json();
+                if (data.status !== 'success') throw new Error(data.message);
+                renderResults(data);
+                results.style.display = 'block';
+            } catch (e) {
+                alert('Error: ' + e.message);
+                placeholder.style.display = 'block';
+            } finally {
+                loading.style.display = 'none';
+                btn.disabled = false;
+            }
+        }
+
+        function v(val, fallback) { return val != null && val !== undefined ? val : fallback; }
+        function fmt2(val) { return val != null ? Number(val).toFixed(2) : '-'; }
+        function fmt1(val) { return val != null ? Number(val).toFixed(1) : '-'; }
+        function fmt0(val) { return val != null ? Number(val).toFixed(0) : '-'; }
+
+        function renderResults(data) {
+            const s = data.summary;
+            document.getElementById('strategy-desc').innerHTML = `
+                <strong>${data.strategy.toUpperCase()}</strong> on <strong>${data.symbol}</strong> (${data.period})
+                &mdash; ${data.strategy_description}
+                ${s.message ? '<br><span style="color:#f59e0b;">' + s.message + '</span>' : ''}
+            `;
+
+            // Summary cards
+            const cards = document.getElementById('summary-cards');
+            const metrics = [
+                {label: 'Months Traded', value: v(s.total_trades, 0), fmt: x => x + ' / ' + v(s.total_months, '?')},
+                {label: 'Months Skipped', value: v(s.months_skipped, 0), fmt: x => x, color: x => x > 0 ? 'negative' : 'positive'},
+                {label: 'Win Rate', value: v(s.win_rate_pct, 0), fmt: x => fmt1(x) + '%', color: x => x >= 50 ? 'positive' : 'negative'},
+                {label: 'Avg Monthly Return', value: v(s.avg_monthly_return_pct, 0), fmt: x => fmt2(x) + '%', color: x => x >= 0 ? 'positive' : 'negative'},
+                {label: 'Avg Net Credit', value: v(s.avg_net_credit_pct, 0), fmt: x => fmt2(x) + '%', color: x => x >= 1 ? 'positive' : ''},
+                {label: 'Annualized Return', value: v(s.annualized_return_pct, 0), fmt: x => fmt2(x) + '%', color: x => x >= 0 ? 'positive' : 'negative'},
+                {label: 'Sharpe Ratio', value: v(s.sharpe_ratio, 0), fmt: x => fmt2(x), color: x => x >= 1 ? 'positive' : x < 0 ? 'negative' : ''},
+                {label: 'Best Trade', value: v(s.best_trade_pct, 0), fmt: x => fmt2(x) + '%', color: () => 'positive'},
+                {label: 'Worst Trade', value: v(s.worst_trade_pct, 0), fmt: x => fmt2(x) + '%', color: () => 'negative'},
+                {label: 'Max Drawdown', value: v(s.max_drawdown, 0), fmt: x => fmt0(x), color: () => 'negative'},
+                {label: 'Avg IV at Entry', value: v(s.avg_iv_at_entry, 0), fmt: x => fmt1(x * 100) + '%'},
+                {label: 'Avg Days Held', value: v(s.avg_days_held, 0), fmt: x => fmt1(x)},
+            ];
+            cards.innerHTML = metrics.map(m => {
+                const cls = m.color ? m.color(m.value) : '';
+                const tip = cardTips[m.label] || '';
+                const tipAttr = tip ? ` data-tip="${tip}"` : '';
+                return `<div class="card"${tipAttr}><div class="value ${cls}">${m.fmt(m.value)}</div><div class="label">${m.label}</div></div>`;
+            }).join('');
+
+            // Equity curve chart
+            renderEquityChart(data.equity_curve);
+            // Price chart with trade markers
+            renderPriceChart(data.price_data, data.trades);
+            // Trades table
+            renderTradeTable(data.trades);
+        }
+
+        function renderEquityChart(curve) {
+            const ctx = document.getElementById('equity-chart').getContext('2d');
+            if (equityChart) equityChart.destroy();
+            equityChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: curve.map(c => c.date),
+                    datasets: [{
+                        label: 'Cumulative P&L %',
+                        data: curve.map(c => c.cum_pnl_pct),
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16,185,129,0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 3,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: { display: true, text: 'Equity Curve (Cumulative P&L %)', color: '#aaa' },
+                        legend: { display: false },
+                    },
+                    scales: {
+                        x: { ticks: { color: '#666', maxTicksLimit: 12 }, grid: { color: '#1e2130' } },
+                        y: { ticks: { color: '#666', callback: v => v + '%' }, grid: { color: '#1e2130' } },
+                    }
+                }
+            });
+        }
+
+        function renderPriceChart(priceData, trades) {
+            const ctx = document.getElementById('price-chart').getContext('2d');
+            if (priceChart) priceChart.destroy();
+
+            // Mark entry/exit points
+            const entryPoints = trades.map(t => ({x: t.entry_date, y: t.stock_price_entry}));
+            const exitPoints = trades.map(t => ({x: t.exit_date, y: t.stock_price_exit}));
+
+            priceChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: priceData.dates,
+                    datasets: [
+                        {
+                            label: 'Stock Price',
+                            data: priceData.closes,
+                            borderColor: '#3b82f6',
+                            borderWidth: 1.5,
+                            pointRadius: 0,
+                            fill: false,
+                        },
+                        {
+                            label: 'Entry',
+                            data: entryPoints.map(p => ({x: p.x, y: p.y})),
+                            type: 'scatter',
+                            backgroundColor: '#10b981',
+                            pointRadius: 5,
+                            pointStyle: 'triangle',
+                        },
+                        {
+                            label: 'Exit',
+                            data: exitPoints.map(p => ({x: p.x, y: p.y})),
+                            type: 'scatter',
+                            backgroundColor: '#ef4444',
+                            pointRadius: 5,
+                            pointStyle: 'rectRot',
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: { display: true, text: 'Stock Price with Entry/Exit Points', color: '#aaa' },
+                        legend: { labels: { color: '#888' } },
+                    },
+                    scales: {
+                        x: { ticks: { color: '#666', maxTicksLimit: 12 }, grid: { color: '#1e2130' } },
+                        y: { ticks: { color: '#666' }, grid: { color: '#1e2130' } },
+                    }
+                }
+            });
+        }
+
+        function renderTradeTable(trades) {
+            const tbody = document.getElementById('trade-body');
+            tbody.innerHTML = trades.map((t, i) => {
+                const cls = (t.pnl || 0) >= 0 ? 'pos' : 'neg';
+                const month = (t.entry_date || '').substring(0, 7);
+                return `<tr>
+                    <td>${i + 1}</td>
+                    <td>${month}</td>
+                    <td>${t.entry_date || '-'}</td>
+                    <td>${t.exit_date || '-'}</td>
+                    <td>${t.days_held || '-'}</td>
+                    <td>${fmt2(t.stock_price_entry)}</td>
+                    <td>${fmt2(t.stock_price_exit)}</td>
+                    <td>${t.call_strike || '-'}</td>
+                    <td>${fmt2(t.call_premium_received)}</td>
+                    <td>${t.put_strike || '-'}</td>
+                    <td>${fmt2(t.put_premium_paid)}</td>
+                    <td class="pos">${fmt2(t.net_credit)}</td>
+                    <td class="pos">${fmt2(t.net_credit_pct)}%</td>
+                    <td>${fmt1(v(t.iv_at_entry, 0) * 100)}%</td>
+                    <td class="${cls}">${fmt2(t.pnl)}</td>
+                    <td class="${cls}">${fmt2(t.pnl_pct)}%</td>
+                </tr>`;
+            }).join('');
+        }
+
+        loadStrategies();
+    </script>
+</body>
+</html>

@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Options Strategy Guide</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f1117;
+            color: #d0d0d0;
+            padding: 20px;
+            line-height: 1.7;
+        }
+        a { color: #60a5fa; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        h1 { text-align: center; margin-bottom: 4px; color: #fff; font-size: 1.5rem; }
+        .subtitle { text-align: center; color: #888; margin-bottom: 20px; font-size: 0.85rem; }
+        .nav { text-align: center; margin-bottom: 30px; font-size: 0.85rem; }
+
+        .content {
+            max-width: 820px;
+            margin: 0 auto;
+        }
+
+        h2 {
+            color: #fff;
+            font-size: 1.25rem;
+            margin: 36px 0 12px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #2a2a3a;
+        }
+        h2:first-of-type { margin-top: 0; }
+        h3 {
+            color: #93c5fd;
+            font-size: 1rem;
+            margin: 24px 0 8px;
+        }
+
+        p { margin-bottom: 12px; }
+        strong { color: #e0e0e0; }
+
+        .term {
+            color: #fbbf24;
+            font-weight: 600;
+        }
+
+        .box {
+            background: #161822;
+            border: 1px solid #2a2a3a;
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin: 16px 0;
+        }
+        .box.blue {
+            border-color: #1e3a5f;
+            background: #0d1520;
+        }
+        .box.green {
+            border-color: #1a3a2a;
+            background: #0d1a14;
+        }
+        .box.amber {
+            border-color: #3a3020;
+            background: #1a1708;
+        }
+
+        .diagram {
+            font-family: 'Courier New', monospace;
+            background: #0a0c12;
+            border: 1px solid #222;
+            border-radius: 6px;
+            padding: 16px;
+            margin: 16px 0;
+            font-size: 0.82rem;
+            line-height: 1.5;
+            overflow-x: auto;
+            white-space: pre;
+            color: #a0a8c0;
+        }
+
+        ul, ol { margin: 8px 0 12px 20px; }
+        li { margin-bottom: 6px; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0;
+            font-size: 0.85rem;
+        }
+        th {
+            background: #1a1d27;
+            color: #aaa;
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 2px solid #333;
+        }
+        td {
+            padding: 8px 12px;
+            border-bottom: 1px solid #1e2130;
+        }
+        .pos { color: #10b981; }
+        .neg { color: #ef4444; }
+
+        .toc {
+            background: #161822;
+            border: 1px solid #2a2a3a;
+            border-radius: 8px;
+            padding: 16px 20px;
+        }
+        .toc a {
+            display: block;
+            padding: 4px 0;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <h1>Options Strategy Guide</h1>
+    <p class="subtitle">A beginner-friendly guide to the strategies and concepts used in this backtester</p>
+    <div class="nav"><a href="/">Live Dashboard</a> | <a href="/backtest">Backtester</a> | <a href="/guide">Guide</a></div>
+
+    <div class="content">
+
+        <div class="toc">
+            <strong style="color:#fff;">Contents</strong>
+            <a href="#basics">1. Options Basics</a>
+            <a href="#greeks">2. The Greeks &amp; IV</a>
+            <a href="#collar">3. The Collar Strategy</a>
+            <a href="#vrp">4. Volatility Risk Premium (VRP)</a>
+            <a href="#params">5. Backtester Parameters Explained</a>
+            <a href="#results">6. Understanding Results</a>
+            <a href="#tips">7. Practical Tips</a>
+        </div>
+
+        <!-- ===== 1. OPTIONS BASICS ===== -->
+        <h2 id="basics">1. Options Basics</h2>
+
+        <h3>What is an Option?</h3>
+        <p>
+            An option is a contract that gives you the <strong>right, but not the obligation</strong>,
+            to buy or sell an asset at a specified price (the <span class="term">strike price</span>)
+            before a certain date (the <span class="term">expiry</span>).
+        </p>
+
+        <div class="box">
+            <strong>Call Option (CE)</strong> &mdash; Right to <em>buy</em> at the strike price.<br>
+            If you <strong>sell</strong> a call, you receive premium upfront but are obligated to sell the stock at the strike if it goes above.<br><br>
+            <strong>Put Option (PE)</strong> &mdash; Right to <em>sell</em> at the strike price.<br>
+            If you <strong>buy</strong> a put, you pay premium but get downside protection — you can sell at the strike even if the stock crashes.
+        </div>
+
+        <h3>Key Terms</h3>
+        <table>
+            <tr><td><span class="term">Strike Price (K)</span></td><td>The price at which the option can be exercised</td></tr>
+            <tr><td><span class="term">Premium</span></td><td>The price paid/received for the option contract</td></tr>
+            <tr><td><span class="term">Expiry</span></td><td>The date the option expires (monthly in our strategy)</td></tr>
+            <tr><td><span class="term">ATM (At The Money)</span></td><td>Strike price &asymp; current stock price</td></tr>
+            <tr><td><span class="term">OTM (Out of The Money)</span></td><td>Call: strike &gt; stock price. Put: strike &lt; stock price</td></tr>
+            <tr><td><span class="term">ITM (In The Money)</span></td><td>Call: strike &lt; stock price. Put: strike &gt; stock price</td></tr>
+            <tr><td><span class="term">Lot Size</span></td><td>Minimum quantity per options contract (e.g., NIFTY = 75 units)</td></tr>
+        </table>
+
+        <h3>Moneyness Example</h3>
+        <div class="diagram">NIFTY at 22,000
+
+Call Strike 22,500 → OTM by 2.3% (stock needs to rise for this to have value)
+Call Strike 22,000 → ATM (at the money)
+Call Strike 21,500 → ITM by 2.3% (already has intrinsic value)
+
+Put Strike 21,500 → OTM by 2.3% (stock needs to fall for this to have value)
+Put Strike 22,000 → ATM
+Put Strike 22,500 → ITM by 2.3%</div>
+
+        <!-- ===== 2. GREEKS & IV ===== -->
+        <h2 id="greeks">2. The Greeks &amp; Implied Volatility</h2>
+
+        <h3>Implied Volatility (IV)</h3>
+        <p>
+            <span class="term">Implied Volatility</span> is the market's expectation of how much a stock
+            will move. It's embedded in option prices — higher IV means higher premiums.
+        </p>
+
+        <div class="box blue">
+            <strong>Historical Vol vs Implied Vol</strong><br>
+            <em>Historical volatility</em> measures how much the stock <strong>actually moved</strong> in the past.<br>
+            <em>Implied volatility</em> measures how much the market <strong>expects it to move</strong> in the future.<br><br>
+            IV is almost always higher than historical vol. This gap is the
+            <a href="#vrp">Volatility Risk Premium</a> — and it's why selling options is profitable.
+        </div>
+
+        <h3>India VIX</h3>
+        <p>
+            The <span class="term">India VIX</span> is the "fear index" — it measures the overall implied
+            volatility of NIFTY options. When VIX is high (>18), option premiums are rich and selling is
+            more attractive. When VIX is low (<12), premiums are thin.
+        </p>
+
+        <h3>IV Skew (Smile)</h3>
+        <p>
+            In theory, all options at the same expiry should have the same IV. In practice, OTM puts have
+            <strong>higher IV</strong> than ATM options (people pay extra for crash protection). This creates
+            a "skew" or "smile" pattern. Our model accounts for this.
+        </p>
+
+        <h3>Key Greeks</h3>
+        <table>
+            <tr><td><span class="term">Delta (&Delta;)</span></td><td>How much the option price changes per ₹1 move in stock. A call with delta 0.3 moves ₹0.30 per ₹1 stock move.</td></tr>
+            <tr><td><span class="term">Theta (&Theta;)</span></td><td>How much the option loses per day from time decay. As an option seller, theta works <em>in your favor</em>.</td></tr>
+            <tr><td><span class="term">Vega (v)</span></td><td>How much the option price changes per 1% change in IV. High vega = more sensitivity to vol changes.</td></tr>
+            <tr><td><span class="term">Gamma (&Gamma;)</span></td><td>Rate of change of delta. High gamma near expiry means sudden large moves can hurt.</td></tr>
+        </table>
+
+        <!-- ===== 3. COLLAR STRATEGY ===== -->
+        <h2 id="collar">3. The Collar Strategy</h2>
+
+        <h3>What is a Collar?</h3>
+        <p>
+            A collar is a <strong>3-legged position</strong> that generates steady income while
+            limiting both upside and downside:
+        </p>
+
+        <div class="box green">
+            <strong>Collar = Buy Stock + Sell OTM Call + Buy OTM Put</strong><br><br>
+            1. <strong>Buy the stock/index</strong> at current price<br>
+            2. <strong>Sell a call</strong> above the current price → receive premium (your income)<br>
+            3. <strong>Buy a put</strong> below the current price → pay premium (your insurance)<br><br>
+            <strong>Net Credit</strong> = Call premium received - Put premium paid<br>
+            If net credit is positive, you earn money just from entering the position.
+        </div>
+
+        <h3>Payoff Diagram</h3>
+        <div class="diagram">                        Profit
+                          │         ╱ Stock only (no collar)
+                          │       ╱
+         Call caps upside →│─ ─ ─●━━━━━━━━━━━━━━  ← Max profit (call strike - entry + net credit)
+                          │   ╱ ┃
+                          │ ╱   ┃
+    ──────────────────────●─────┃────── Stock Price
+                        ╱ │    ┃
+                      ╱   │
+    Put limits loss →━━━━━●─ ─ ─   ← Max loss (entry - put strike - net credit)
+                          │
+                        Loss
+
+    ● Entry price     ━━━ Collar payoff     ╱ Stock-only payoff</div>
+
+        <h3>Monthly Cycle</h3>
+        <p>Our strategy runs in <strong>monthly cycles</strong>:</p>
+        <ol>
+            <li><strong>Month start</strong>: Check if premiums are attractive enough (net credit &ge; threshold)</li>
+            <li><strong>If yes</strong>: Enter the collar &mdash; buy stock, sell call, buy put</li>
+            <li><strong>If no</strong>: Skip the month entirely &mdash; no position, no risk</li>
+            <li><strong>Month end</strong>: Square off everything &mdash; sell stock, buy back call, sell put</li>
+            <li>Repeat next month</li>
+        </ol>
+
+        <h3>Example Trade</h3>
+        <div class="box">
+            <strong>NIFTY at 22,000 | IV = 14% | 22 trading days to month end</strong><br><br>
+            Sell 22,200 Call → receive ₹259 premium (1.18% of entry)<br>
+            Buy 20,900 Put → pay ₹19 premium (0.09% of entry)<br>
+            <strong>Net Credit = ₹240 (1.09% of entry)</strong><br><br>
+            <strong>Scenario A:</strong> NIFTY ends at 22,100 (flat/up slightly)<br>
+            Stock P&L: +100 | Call expires worthless: +259 | Put expires worthless: -19<br>
+            <span class="pos"><strong>Total P&L: +₹340 (+1.55%)</strong></span><br><br>
+
+            <strong>Scenario B:</strong> NIFTY rises to 23,000 (big rally, upside capped)</br>
+            Stock P&L: +1,000 | Call loss: 259 - 800 = -541 | Put worthless: -19<br>
+            <span class="pos"><strong>Total P&L: +₹440 (+2.00%)</strong></span> (capped at call strike)<br><br>
+
+            <strong>Scenario C:</strong> NIFTY falls to 21,000 (crash, put protects)</br>
+            Stock P&L: -1,000 | Call worthless: +259 | Put gain: 0 - 19 = -19 (OTM put, no protection yet)<br>
+            <span class="neg"><strong>Total P&L: -₹760 (-3.45%)</strong></span><br>
+            Without the collar, loss would be -₹1,000 (-4.55%). If put were closer (e.g., 21,500), loss is further limited.
+        </div>
+
+        <h3>Why It Works</h3>
+        <ul>
+            <li><strong>Theta decay</strong>: Each day, the call you sold loses value → profit for you</li>
+            <li><strong>Volatility Risk Premium</strong>: Options are systematically overpriced vs realized moves</li>
+            <li><strong>High win rate</strong>: Market stays flat or moves slightly most months → you keep the premium</li>
+            <li><strong>Defined risk</strong>: The put limits your maximum loss</li>
+        </ul>
+
+        <!-- ===== 4. VRP ===== -->
+        <h2 id="vrp">4. Volatility Risk Premium (VRP)</h2>
+
+        <p>
+            The <span class="term">Volatility Risk Premium</span> is the most important concept in options selling.
+            It's the persistent gap between <strong>implied volatility</strong> (what options are priced at) and
+            <strong>realized volatility</strong> (what actually happens).
+        </p>
+
+        <div class="box amber">
+            <strong>Why does VRP exist?</strong><br><br>
+            Options are <em>insurance contracts</em>. Just like car insurance costs more than the expected payout
+            (the insurance company needs a margin), options cost more than the expected stock movement.<br><br>
+            People pay <strong>extra</strong> for protection against crashes, earnings surprises, etc.
+            As an option seller, you <strong>collect this extra</strong>. Most months, the stock moves less
+            than what the options priced in → you keep the difference.
+        </div>
+
+        <table>
+            <tr><th></th><th>NIFTY Typical Range</th></tr>
+            <tr><td>Historical (realized) volatility</td><td>8-14%</td></tr>
+            <tr><td>Implied volatility (India VIX)</td><td>12-18%</td></tr>
+            <tr><td><strong>VRP (the gap)</strong></td><td><strong>~20-50% higher IV vs realized</strong></td></tr>
+        </table>
+
+        <p>
+            In the backtester, we only have historical prices, not real option prices. So we use Black-Scholes
+            to estimate premiums. You can set the IV two ways:
+        </p>
+        <ul>
+            <li><strong>Fixed IV (recommended)</strong>: Set the implied vol directly (e.g., 35%). This is what you see in the option chain. Simple and realistic.</li>
+            <li><strong>VRP mode</strong>: Multiply historical vol by a factor. Less intuitive — historical vol varies month to month, and you need very high multipliers (200%+) to match real premiums.</li>
+        </ul>
+        <p>
+            <strong>Use Fixed IV = 30-40%</strong> for NIFTY to match real-world premiums of 3-5% on calls.
+        </p>
+
+        <!-- ===== 5. PARAMETERS ===== -->
+        <h2 id="params">5. Backtester Parameters Explained</h2>
+
+        <h3>Input Parameters</h3>
+        <table>
+            <tr><th>Parameter</th><th>What it does</th><th>Recommended</th></tr>
+            <tr>
+                <td><strong>Stock Symbol</strong></td>
+                <td>The stock or index to backtest. NIFTY 50 uses ^NSEI from Yahoo Finance.</td>
+                <td>NIFTY 50 for index strategy</td>
+            </tr>
+            <tr>
+                <td><strong>Strategy</strong></td>
+                <td>Which trading strategy to run. Currently only "collar" is available.</td>
+                <td>collar</td>
+            </tr>
+            <tr>
+                <td><strong>History Period</strong></td>
+                <td>How far back to fetch data. Longer periods give more trades but may include different market regimes.</td>
+                <td>2 Years for balanced results</td>
+            </tr>
+            <tr>
+                <td><strong>Min Net Premium %</strong></td>
+                <td>If net credit (call - put premium) as % of stock price is below this, the month is skipped. Higher = fewer but better trades.</td>
+                <td>0.75-1.0%</td>
+            </tr>
+            <tr>
+                <td><strong>Call Scan Range (min/max %)</strong></td>
+                <td>The backtester scans all valid call strikes between min% and max% above the stock price, and picks the best one based on the objective.</td>
+                <td>0-10% (wide scan)</td>
+            </tr>
+            <tr>
+                <td><strong>Call Objective</strong></td>
+                <td>How to pick the "best" call strike from the scan range. Different objectives favor different risk/reward profiles.</td>
+                <td>Max net credit (matches real trading)</td>
+            </tr>
+            <tr>
+                <td><strong>Put Offset %</strong></td>
+                <td>How far below the stock price to place the protective put. Higher = cheaper put, less protection.</td>
+                <td>5% (moderate protection)</td>
+            </tr>
+            <tr>
+                <td><strong>IV Source</strong></td>
+                <td>"Fixed IV" lets you set implied vol directly (recommended). "VRP" multiplies historical vol by a premium factor.</td>
+                <td>Fixed IV</td>
+            </tr>
+            <tr>
+                <td><strong>Fixed IV %</strong></td>
+                <td>The implied volatility to use for option pricing. This is what you'd see in the option chain / India VIX. Higher IV = richer premiums.</td>
+                <td><strong>30-40% for NIFTY</strong> (matches real 3-5% call premiums)</td>
+            </tr>
+            <tr>
+                <td><strong>Min IV</strong></td>
+                <td>Only enter trades when historical volatility is above this level. 0 = always enter. Useful for filtering out low-vol periods where premiums are thin even with VRP.</td>
+                <td>0 (enter all months)</td>
+            </tr>
+            <tr>
+                <td><strong>Lot Size</strong></td>
+                <td>Number of lots for P&L scaling. Multiplies the absolute P&L but not the percentage returns.</td>
+                <td>1</td>
+            </tr>
+        </table>
+
+        <h3>Call Objectives Explained</h3>
+        <table>
+            <tr><th>Objective</th><th>What it optimizes</th><th>Best for</th></tr>
+            <tr>
+                <td><strong>Max Return on Risk</strong></td>
+                <td>Picks the strike with best reward/risk ratio: max_profit / max_loss</td>
+                <td>Balanced risk-adjusted returns</td>
+            </tr>
+            <tr>
+                <td><strong>Max Net Credit</strong></td>
+                <td>Maximizes call premium minus put premium. Favors lower (closer to ATM) strikes.</td>
+                <td>Income-focused, matches typical manual trading</td>
+            </tr>
+            <tr>
+                <td><strong>Max Premium</strong></td>
+                <td>Maximizes raw call premium received. Picks the lowest strike in the range.</td>
+                <td>Maximum income, most aggressive</td>
+            </tr>
+            <tr>
+                <td><strong>Max Premium Efficiency</strong></td>
+                <td>Maximizes premium per unit of delta (assignment risk). Balances income vs risk.</td>
+                <td>Conservative, risk-aware</td>
+            </tr>
+            <tr>
+                <td><strong>Max Expected Return</strong></td>
+                <td>Estimates P&L across all possible stock outcomes weighted by probability. Most theoretically rigorous.</td>
+                <td>Probability-based decision making</td>
+            </tr>
+        </table>
+
+        <!-- ===== 6. RESULTS ===== -->
+        <h2 id="results">6. Understanding Results</h2>
+
+        <h3>Summary Cards</h3>
+        <table>
+            <tr><th>Metric</th><th>What it means</th><th>Good values</th></tr>
+            <tr>
+                <td><strong>Months Traded</strong></td>
+                <td>How many months had enough premium to enter a trade, out of total months in the data.</td>
+                <td>&gt;70% of total months</td>
+            </tr>
+            <tr>
+                <td><strong>Months Skipped</strong></td>
+                <td>Months where net credit was below the minimum threshold, so no position was taken.</td>
+                <td>&lt;30% of total</td>
+            </tr>
+            <tr>
+                <td><strong>Win Rate</strong></td>
+                <td>Percentage of trades that made money. Collar strategies typically have high win rates because you profit whenever the stock stays within the collar range.</td>
+                <td>&gt;65%</td>
+            </tr>
+            <tr>
+                <td><strong>Avg Monthly Return</strong></td>
+                <td>Average P&L % per trade (each trade is one month). This is your expected monthly income from the strategy.</td>
+                <td>0.5-1.5%</td>
+            </tr>
+            <tr>
+                <td><strong>Avg Net Credit</strong></td>
+                <td>Average premium collected (call - put) as % of stock price across all trades. This is your "income" before stock movement effects.</td>
+                <td>&gt;1.0%</td>
+            </tr>
+            <tr>
+                <td><strong>Annualized Return</strong></td>
+                <td>Average monthly return &times; 12. Estimate of yearly return if you run the strategy every month.</td>
+                <td>&gt;6%</td>
+            </tr>
+            <tr>
+                <td><strong>Sharpe Ratio</strong></td>
+                <td>Risk-adjusted return: (avg return / volatility of returns) &times; &radic;12. Higher = more consistent returns relative to risk. Below 0 = losing money.</td>
+                <td>&gt;1.0 is good, &gt;2.0 is excellent</td>
+            </tr>
+            <tr>
+                <td><strong>Best/Worst Trade</strong></td>
+                <td>The single best and worst monthly P&L %. Shows the range of outcomes you should expect.</td>
+                <td>Worst trade &gt; -5%</td>
+            </tr>
+            <tr>
+                <td><strong>Max Drawdown</strong></td>
+                <td>Largest cumulative loss from a peak to a trough (in absolute P&L). Shows the worst losing streak you would have experienced.</td>
+                <td>Lower is better</td>
+            </tr>
+            <tr>
+                <td><strong>Avg IV at Entry</strong></td>
+                <td>Average historical volatility when trades were entered. Higher IV → richer premiums.</td>
+                <td>10-20% for NIFTY</td>
+            </tr>
+            <tr>
+                <td><strong>Avg Days Held</strong></td>
+                <td>Average number of trading days per position. In a monthly strategy, this is typically 20-23 days.</td>
+                <td>~20-22 days</td>
+            </tr>
+        </table>
+
+        <h3>Charts</h3>
+        <p>
+            <strong>Equity Curve</strong>: Shows cumulative P&L % over time. An upward-sloping line means the
+            strategy is making money consistently. Flat periods are skipped months.
+        </p>
+        <p>
+            <strong>Price Chart</strong>: Shows the stock/index price with green triangles (entries) and red
+            diamonds (exits). Helps you see which market conditions the strategy traded in.
+        </p>
+
+        <!-- ===== 7. TIPS ===== -->
+        <h2 id="tips">7. Practical Tips</h2>
+
+        <div class="box green">
+            <strong>Getting Started</strong>
+            <ol>
+                <li>Select <strong>NIFTY 50</strong> as the symbol</li>
+                <li>Set IV source to <strong>Fixed IV</strong> and set it to <strong>35%</strong> — this is critical for realistic premiums</li>
+                <li>Set <strong>Min Premium to 0.75-1.0%</strong></li>
+                <li>Use <strong>Max Net Credit</strong> as the objective (matches manual trading)</li>
+                <li>Run with <strong>2 year</strong> period first, then try 5 years for robustness</li>
+            </ol>
+        </div>
+
+        <h3>Key Insights</h3>
+        <ul>
+            <li><strong>VRP is your edge</strong>: The entire strategy profits from the gap between implied and realized vol. If VRP = 0 in the backtester, you're not modeling reality.</li>
+            <li><strong>Months you skip matter</strong>: The premium gate protects you from entering low-premium months where the risk/reward isn't worth it. Don't set the threshold too low.</li>
+            <li><strong>Drawdowns happen</strong>: Even with a 75%+ win rate, you will have months with 3-5% losses when the stock moves sharply. The put limits catastrophic loss, but doesn't eliminate all drawdowns.</li>
+            <li><strong>Call strike matters</strong>: Closer to ATM = more premium but more likely to be breached. Further OTM = less premium but more upside room. The backtester scans the full range to find the best trade-off.</li>
+            <li><strong>Put should be cheap</strong>: The put is insurance, not a profit center. Deep OTM puts (5%+ below) cost very little and protect against tail events.</li>
+            <li><strong>B-S is an approximation</strong>: Real markets have bid-ask spreads, slippage, and liquidity effects. Treat backtest results as directional guides, not exact predictions.</li>
+        </ul>
+
+        <h3>What Fixed IV Should I Use?</h3>
+        <table>
+            <tr><th>Market Condition</th><th>Fixed IV Setting</th><th>Expected Call Premium</th></tr>
+            <tr><td>Low VIX / calm market</td><td>15-20%</td><td>~1-2%</td></tr>
+            <tr><td>Normal / typical</td><td>25-35%</td><td>~2-4%</td></tr>
+            <tr><td>High VIX / volatile</td><td>35-50%</td><td>~3-5%+</td></tr>
+            <tr><td>Individual stocks</td><td>30-50%</td><td>Varies</td></tr>
+        </table>
+        <p>
+            <strong>Tip:</strong> If you're getting 3-5% call premiums in real trading, set Fixed IV to 35-45%.
+            The "min net credit %" slider filters on <em>net credit</em> (call premium minus put cost), not
+            raw call premium. Net credit is typically 1-2.5% even when call premiums are 3-5%.
+        </p>
+
+    </div>
+</body>
+</html>

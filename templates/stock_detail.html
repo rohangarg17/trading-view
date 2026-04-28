@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ symbol }} — Stock Details</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f1117;
+            color: #e0e0e0;
+            padding: 20px;
+            max-width: 1300px;
+            margin: 0 auto;
+        }
+        a { color: #60a5fa; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        h1 { color: #fff; font-size: 1.6rem; margin-bottom: 2px; }
+        .nav { text-align: center; margin-bottom: 20px; font-size: 0.85rem; color: #888; }
+        .hero {
+            background: #161822;
+            border: 1px solid #222;
+            border-radius: 8px;
+            padding: 18px;
+            margin-bottom: 18px;
+            display: flex;
+            gap: 24px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .hero .price { font-size: 2rem; color: #fff; font-weight: 700; }
+        .hero .meta { color: #888; font-size: 0.85rem; }
+        .hero .week52 {
+            flex: 1;
+            min-width: 220px;
+        }
+        .week52-bar {
+            position: relative;
+            height: 8px;
+            background: #1a1d27;
+            border-radius: 4px;
+            margin: 6px 0 4px;
+        }
+        .week52-marker {
+            position: absolute;
+            top: -3px;
+            width: 4px;
+            height: 14px;
+            background: #60a5fa;
+            border-radius: 2px;
+        }
+        .week52-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            color: #888;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 16px;
+            margin-bottom: 18px;
+        }
+        .card {
+            background: #161822;
+            border: 1px solid #222;
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .card h3 {
+            color: #aaa;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+            border-bottom: 1px solid #222;
+            padding-bottom: 6px;
+        }
+        .indicator-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+            font-size: 0.88rem;
+        }
+        .indicator-row + .indicator-row { border-top: 1px solid #1e2130; }
+        .indicator-row .label { color: #aaa; }
+        .indicator-row .value { color: #fff; font-weight: 600; margin-right: 10px; }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .badge.buy { background: #064e3b; color: #10b981; }
+        .badge.sell { background: #4c0519; color: #ef4444; }
+        .badge.neutral { background: #1e2130; color: #888; }
+        .badge.bullish { background: #0b2a4a; color: #60a5fa; }
+        .badge.bearish { background: #3b1a0f; color: #f59e0b; }
+        .big-stat {
+            font-size: 1.6rem;
+            color: #fff;
+            font-weight: 700;
+            margin: 4px 0;
+        }
+        .stat-meta { color: #888; font-size: 0.8rem; }
+        .rec-bar {
+            display: flex;
+            height: 14px;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 10px 0 6px;
+        }
+        .rec-seg { height: 100%; }
+        .rec-seg.strongBuy { background: #059669; }
+        .rec-seg.buy { background: #10b981; }
+        .rec-seg.hold { background: #64748b; }
+        .rec-seg.sell { background: #ef4444; }
+        .rec-seg.strongSell { background: #991b1b; }
+        .rec-legend {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.72rem;
+            color: #888;
+        }
+        .news-item {
+            padding: 10px 0;
+            border-bottom: 1px solid #1e2130;
+            font-size: 0.88rem;
+        }
+        .news-item:last-child { border-bottom: none; }
+        .news-item .title { color: #e0e0e0; font-weight: 500; display: block; margin-bottom: 3px; }
+        .news-item .title:hover { color: #60a5fa; }
+        .news-item .meta { color: #666; font-size: 0.75rem; }
+        #price-chart-wrap, #forecast-chart-wrap {
+            height: 320px;
+            position: relative;
+        }
+        .full { grid-column: 1 / -1; }
+        .muted { color: #666; font-style: italic; font-size: 0.85rem; }
+        #loading { text-align: center; padding: 60px; color: #888; }
+        .spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid #333;
+            border-top-color: #2563eb;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #error {
+            text-align: center;
+            padding: 20px;
+            color: #ef4444;
+            background: #2a0a0a;
+            border: 1px solid #4a0f0f;
+            border-radius: 6px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <a href="/">Live Dashboard</a> | <a href="/backtest">Backtester</a> | <a href="/guide">Guide</a>
+    </div>
+
+    <h1 id="symbol-header">{{ symbol }}</h1>
+    <p class="nav" style="text-align:left; margin-bottom:14px;">Stock details &amp; forecast</p>
+
+    <div id="loading"><span class="spinner"></span>Loading details for {{ symbol }}...</div>
+    <div id="error"></div>
+
+    <div id="content" style="display:none;">
+        <div class="hero">
+            <div>
+                <div class="price" id="ltp"></div>
+                <div class="meta" id="updated"></div>
+            </div>
+            <div class="week52">
+                <div class="meta">52-week range</div>
+                <div class="week52-bar">
+                    <div class="week52-marker" id="week52-marker"></div>
+                </div>
+                <div class="week52-labels">
+                    <span id="week52-low"></span>
+                    <span id="week52-pos"></span>
+                    <span id="week52-high"></span>
+                </div>
+            </div>
+            <div>
+                <div class="meta">20d avg volume</div>
+                <div class="big-stat" id="volume-ratio"></div>
+                <div class="stat-meta" id="volume-meta"></div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h3>Technical Indicators</h3>
+                <div id="indicators-list"></div>
+            </div>
+
+            <div class="card">
+                <h3>Analyst View</h3>
+                <div id="analyst-block"></div>
+            </div>
+
+            <div class="card">
+                <h3>Implied Move (ATM Straddle)</h3>
+                <div id="implied-move-block"></div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card full">
+                <h3>Price with Bollinger Bands</h3>
+                <div id="price-chart-wrap"><canvas id="price-chart"></canvas></div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card full">
+                <h3>Forecast — Monte Carlo Cone (60 trading days)</h3>
+                <div id="forecast-chart-wrap"><canvas id="forecast-chart"></canvas></div>
+                <div class="stat-meta" id="forecast-meta" style="margin-top:8px;"></div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card full">
+                <h3>Recent News</h3>
+                <div id="news-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const SYMBOL = "{{ symbol }}";
+        const SIGNAL_CLASS = {
+            buy: 'buy', sell: 'sell', neutral: 'neutral',
+            bullish: 'bullish', bearish: 'bearish',
+        };
+
+        function fmt(n, d = 2) {
+            if (n == null || Number.isNaN(n)) return '—';
+            return Number(n).toLocaleString('en-IN', {minimumFractionDigits: d, maximumFractionDigits: d});
+        }
+
+        function fmtInt(n) {
+            if (n == null) return '—';
+            return Number(n).toLocaleString('en-IN');
+        }
+
+        function relTime(tsSec) {
+            if (!tsSec) return '';
+            const diff = (Date.now() / 1000) - tsSec;
+            if (diff < 3600) return Math.round(diff / 60) + 'm ago';
+            if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
+            return Math.round(diff / 86400) + 'd ago';
+        }
+
+        function renderIndicators(data) {
+            const { values, signals } = data.indicators;
+            const rows = [
+                ['RSI (14)', fmt(values.rsi, 1), signals.rsi],
+                ['MACD Histogram', fmt(values.macd_hist, 3), signals.macd],
+                ['50 / 200 DMA', `${fmt(values.ma50)} / ${fmt(values.ma200)}`, signals.ma_cross],
+                ['Bollinger (20, 2σ)', `${fmt(values.bb_lower)} – ${fmt(values.bb_upper)}`, signals.bollinger],
+                ['ATR (14)', fmt(values.atr), 'neutral'],
+            ];
+            const html = rows.map(([label, value, sig]) => `
+                <div class="indicator-row">
+                    <span class="label">${label}</span>
+                    <span>
+                        <span class="value">${value}</span>
+                        <span class="badge ${SIGNAL_CLASS[sig] || 'neutral'}">${sig}</span>
+                    </span>
+                </div>
+            `).join('');
+            document.getElementById('indicators-list').innerHTML = html;
+        }
+
+        function renderAnalyst(data) {
+            const a = data.analyst;
+            const r = data.recommendations;
+            const el = document.getElementById('analyst-block');
+            if (!a && !r) {
+                el.innerHTML = '<div class="muted">No analyst data available.</div>';
+                return;
+            }
+            let html = '';
+            if (a && a.target_mean != null) {
+                const upside = ((a.target_mean / data.price.last) - 1) * 100;
+                html += `
+                    <div class="stat-meta">Mean price target</div>
+                    <div class="big-stat">₹${fmt(a.target_mean)}</div>
+                    <div class="stat-meta">Upside: <span style="color:${upside >= 0 ? '#10b981' : '#ef4444'}">${upside >= 0 ? '+' : ''}${fmt(upside, 1)}%</span>
+                    &nbsp;|&nbsp; Range: ₹${fmt(a.target_low)} – ₹${fmt(a.target_high)}
+                    &nbsp;|&nbsp; ${a.num_analysts ?? '—'} analysts
+                    &nbsp;|&nbsp; ${a.recommendation ?? '—'}</div>
+                `;
+            }
+            if (r) {
+                const total = Object.values(r).reduce((s, v) => s + v, 0) || 1;
+                const order = ['strongBuy', 'buy', 'hold', 'sell', 'strongSell'];
+                html += '<div class="rec-bar">';
+                order.forEach(k => {
+                    const pct = (r[k] || 0) / total * 100;
+                    if (pct > 0) html += `<div class="rec-seg ${k}" style="width:${pct}%" title="${k}: ${r[k]}"></div>`;
+                });
+                html += '</div><div class="rec-legend">';
+                order.forEach(k => {
+                    html += `<span>${k.replace('strong', 'Strong ')}<br><b>${r[k] ?? 0}</b></span>`;
+                });
+                html += '</div>';
+            }
+            el.innerHTML = html;
+        }
+
+        async function renderImpliedMove(data) {
+            const el = document.getElementById('implied-move-block');
+            try {
+                const resp = await fetch('/api/data');
+                const json = await resp.json();
+                if (json.status !== 'success') throw new Error('no dashboard data');
+                const stock = (json.data || []).find(s => s.symbol === SYMBOL);
+                if (!stock || !stock.expiries || !stock.expiries.length) {
+                    el.innerHTML = '<div class="muted">No option data available (market closed and no cache).</div>';
+                    return;
+                }
+                let html = '';
+                stock.expiries.slice(0, 3).forEach(e => {
+                    const move = (e.total_premium / stock.ltp) * 100;
+                    const lower = stock.ltp - e.total_premium;
+                    const upper = stock.ltp + e.total_premium;
+                    html += `
+                        <div class="indicator-row">
+                            <span class="label">${e.expiry}</span>
+                            <span>
+                                <span class="value">±${fmt(move, 2)}%</span>
+                                <span class="stat-meta">₹${fmt(lower)} – ₹${fmt(upper)}</span>
+                            </span>
+                        </div>
+                    `;
+                });
+                el.innerHTML = html;
+            } catch (e) {
+                el.innerHTML = '<div class="muted">Could not load option data.</div>';
+            }
+        }
+
+        function renderPriceChart(data) {
+            const ph = data.price_history;
+            new Chart(document.getElementById('price-chart'), {
+                type: 'line',
+                data: {
+                    labels: ph.dates,
+                    datasets: [
+                        { label: 'Close', data: ph.closes, borderColor: '#60a5fa', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0 },
+                        { label: 'BB Upper', data: ph.bb_upper, borderColor: '#f59e0b', backgroundColor: 'transparent', borderWidth: 1, pointRadius: 0, borderDash: [4, 4] },
+                        { label: 'BB Lower', data: ph.bb_lower, borderColor: '#f59e0b', backgroundColor: 'transparent', borderWidth: 1, pointRadius: 0, borderDash: [4, 4] },
+                    ],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: { ticks: { color: '#888', maxTicksLimit: 10 }, grid: { color: '#1e2130' } },
+                        y: { ticks: { color: '#888' }, grid: { color: '#1e2130' } },
+                    },
+                    plugins: { legend: { labels: { color: '#ccc' } } },
+                },
+            });
+        }
+
+        function renderForecastChart(data) {
+            if (!data.forecast) {
+                document.getElementById('forecast-chart-wrap').innerHTML =
+                    '<div class="muted" style="padding:20px;">Insufficient history to forecast.</div>';
+                return;
+            }
+            const cone = data.forecast.cone;
+            new Chart(document.getElementById('forecast-chart'), {
+                type: 'line',
+                data: {
+                    labels: cone.days.map(d => `+${d}d`),
+                    datasets: [
+                        { label: 'p95', data: cone.p95, borderColor: '#10b981', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, borderDash: [3, 3] },
+                        { label: 'p50 (median)', data: cone.p50, borderColor: '#60a5fa', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 0 },
+                        { label: 'p5', data: cone.p5, borderColor: '#ef4444', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, borderDash: [3, 3] },
+                    ],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { ticks: { color: '#888', maxTicksLimit: 10 }, grid: { color: '#1e2130' } },
+                        y: { ticks: { color: '#888' }, grid: { color: '#1e2130' } },
+                    },
+                    plugins: { legend: { labels: { color: '#ccc' } } },
+                },
+            });
+            const f = data.forecast;
+            const at = f.analyst_targets || {};
+            let meta = `Annualized vol: ${fmt(f.sigma_annual * 100, 1)}% (20d hist).`;
+            if (at.mean != null) {
+                meta += ` Analyst targets — mean ₹${fmt(at.mean)}, range ₹${fmt(at.low)} – ₹${fmt(at.high)}.`;
+            }
+            document.getElementById('forecast-meta').textContent = meta;
+        }
+
+        function renderNews(data) {
+            const el = document.getElementById('news-list');
+            if (!data.news || !data.news.length) {
+                el.innerHTML = '<div class="muted">No recent news.</div>';
+                return;
+            }
+            el.innerHTML = data.news.map(n => `
+                <div class="news-item">
+                    <a class="title" href="${n.link}" target="_blank" rel="noopener">${n.title}</a>
+                    <span class="meta">${n.publisher || ''} ${n.publish_ts ? '· ' + relTime(n.publish_ts) : ''}</span>
+                </div>
+            `).join('');
+        }
+
+        async function load() {
+            const loading = document.getElementById('loading');
+            const err = document.getElementById('error');
+            const content = document.getElementById('content');
+            try {
+                const resp = await fetch(`/api/stock/${encodeURIComponent(SYMBOL)}`);
+                const json = await resp.json();
+                if (json.status !== 'success') throw new Error(json.message || 'Unknown error');
+
+                document.getElementById('ltp').textContent = '₹' + fmt(json.price.last);
+                document.getElementById('updated').textContent = 'Updated: ' + new Date(json.fetched_at).toLocaleString();
+                document.getElementById('week52-low').textContent = '₹' + fmt(json.price.week52_low);
+                document.getElementById('week52-high').textContent = '₹' + fmt(json.price.week52_high);
+                document.getElementById('week52-pos').textContent = json.price.week52_position_pct + '% of range';
+                document.getElementById('week52-marker').style.left = json.price.week52_position_pct + '%';
+
+                const vr = json.price.volume_ratio;
+                document.getElementById('volume-ratio').textContent = vr != null ? fmt(vr) + 'x' : '—';
+                document.getElementById('volume-meta').textContent =
+                    `Today ${fmtInt(json.price.volume_latest)} vs avg ${fmtInt(json.price.volume_avg_20d)}`;
+
+                renderIndicators(json);
+                renderAnalyst(json);
+                renderPriceChart(json);
+                renderForecastChart(json);
+                renderNews(json);
+                renderImpliedMove(json);  // async, fine to fire-and-forget
+
+                content.style.display = 'block';
+            } catch (e) {
+                err.textContent = 'Error loading details: ' + e.message;
+                err.style.display = 'block';
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        load();
+    </script>
+</body>
+</html>
