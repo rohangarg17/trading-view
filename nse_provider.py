@@ -67,6 +67,16 @@ _snapshot_lock = threading.Lock()
 _refresh_thread = None
 _refresh_lock = threading.Lock()
 
+# The NSEBrowser instance owned by the background refresh thread. Other
+# modules (e.g. stock_detail) borrow it for ad-hoc Playwright calls instead
+# of spinning up their own browser.
+_shared_browser = None
+
+
+def get_shared_browser():
+    """Return the background thread's NSEBrowser, or None if not started."""
+    return _shared_browser
+
 
 def _find_atm_strike(ltp, strikes):
     return min(strikes, key=lambda s: abs(s - ltp))
@@ -362,6 +372,8 @@ def _background_refresh_loop():
         print(f"[nse_provider] Playwright failed to start: {e}")
         return
 
+    global _shared_browser
+    _shared_browser = browser
     print(f"[nse_provider] refresh loop ready — concurrency={concurrency}")
 
     while True:

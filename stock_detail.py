@@ -14,6 +14,7 @@ import yfinance as yf
 from backtester import fetch_history, YAHOO_SYMBOL_MAP
 from pricing import historical_volatility
 from indicators import rsi, macd, sma, bollinger, atr, monte_carlo_cone
+from collar_analyzer import analyze as analyze_collar, pick_target_expiry
 
 
 _CACHE = {}
@@ -201,6 +202,48 @@ def _price_summary(data):
     }
 
 
+def _collar(symbol, spot):
+    """Run the collar analyzer for this stock using the background NSEBrowser.
+
+    Picks an expiry in the 20-40 day window, fetches its full option chain,
+    then runs collar_analyzer.analyze. Returns None if the browser isn't up
+    yet or NSE returned nothing usable — the UI shows a graceful empty state.
+    """
+    try:
+        from nse_provider import get_shared_browser, _snapshot, _snapshot_lock
+    except Exception:
+        return None
+    browser = get_shared_browser()
+    if browser is None:
+        return {"reason": "option-chain browser not ready yet — refresh in a minute"}
+
+    # The background snapshot already tells us which expiries exist for this
+    # symbol. No need to re-probe NSE just to learn expiry dates.
+    with _snapshot_lock:
+        snap = _snapshot
+    expiry_str = None
+    chain_type = "Equity"
+    if snap:
+        for row in snap.get("data", []):
+            if row.get("symbol") == symbol:
+                expiries = [e["expiry"] for e in row.get("expiries", [])]
+                expiry_str, _ = pick_target_expiry(expiries)
+                if row.get("type") == "index":
+                    chain_type = "Indices"
+                break
+    if not expiry_str:
+        return {"reason": "no suitable 20-40 day expiry found for this symbol"}
+
+    try:
+        records = browser.fetch_full_chain(symbol, expiry_str, chain_type=chain_type)
+    except Exception as e:
+        return {"reason": f"chain fetch failed: {type(e).__name__}"}
+    if not records:
+        return {"reason": f"NSE returned empty chain for {expiry_str}"}
+
+    return analyze_collar(records, spot=spot, top_n=5)
+
+
 def _forecast(data, analyst):
     closes = data["closes"]
     vols = historical_volatility(closes, window=20)
@@ -236,6 +279,7 @@ def fetch_details(symbol):
     analyst = _analyst_data(ticker)
     price = _price_summary(data)
     forecast = _forecast(data, analyst)
+    collar = _collar(symbol, price["last"])
 
     payload = {
         "status": "success",
@@ -246,6 +290,7 @@ def fetch_details(symbol):
         "recommendations": _recommendations(ticker),
         "news": _news(ticker),
         "forecast": forecast,
+        "collar": collar,
         "price_history": {
             "dates": data["dates"][-252:],
             "closes": [round(c, 2) for c in data["closes"][-252:]],

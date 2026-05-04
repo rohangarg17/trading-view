@@ -122,6 +122,56 @@ async def _fetch_one(page, symbol, chain_type, max_expiries):
     return None
 
 
+# JS that fetches all strikes for a single expiry. Unlike _FETCH_CHAIN_JS it
+# does NOT filter to ATM — we need the full chain for strike scanning.
+_FETCH_EXPIRY_JS = """
+async ({symbol, chainType, expiry}) => {
+    const url = `/api/option-chain-v3?type=${chainType}&symbol=${encodeURIComponent(symbol)}&expiry=${encodeURIComponent(expiry)}`;
+    const r = await fetch(url);
+    const j = await r.json();
+    const recs = (j && j.records) || {};
+    if (!recs.data || !recs.data.length) return { error: 'empty', snippet: JSON.stringify(j).slice(0, 120) };
+    return {
+        records: {
+            data: recs.data,
+            expiryDates: recs.expiryDates || [expiry],
+            underlyingValue: recs.underlyingValue,
+            timestamp: recs.timestamp,
+            strikePrices: recs.strikePrices,
+        },
+    };
+}
+"""
+
+
+async def _fetch_one_expiry(page, symbol, chain_type, expiry):
+    """Fetch all strikes for one specific expiry. Used by the collar analyzer."""
+    for attempt in range(2):
+        try:
+            result = await page.evaluate(
+                _FETCH_EXPIRY_JS,
+                {"symbol": symbol, "chainType": chain_type, "expiry": expiry},
+            )
+            if result.get("error"):
+                if attempt == 0:
+                    try:
+                        await _warm_page(page)
+                    except Exception:
+                        return None
+                    continue
+                return None
+            return result["records"]
+        except Exception:
+            if attempt == 0:
+                try:
+                    await _warm_page(page)
+                except Exception:
+                    return None
+                continue
+            return None
+    return None
+
+
 class NSEBrowser:
     """Singleton owning a Chromium process, a shared BrowserContext, and its
     own asyncio loop on a dedicated thread.
@@ -214,6 +264,28 @@ class NSEBrowser:
         try:
             await _warm_page(page)
             return await _fetch_one(page, symbol, chain_type, max_expiries)
+        finally:
+            try:
+                await page.close()
+            except Exception:
+                pass
+
+    def fetch_full_chain(self, symbol, expiry, chain_type="Equity"):
+        """Blocking fetch of every strike for one specific expiry.
+
+        Returns the raw NSE `records` dict, or None. The Collar Analyzer uses
+        this to scan the full strike ladder rather than just ATM.
+        """
+        fut = asyncio.run_coroutine_threadsafe(
+            self._async_fetch_full_chain(symbol, chain_type, expiry), self._loop,
+        )
+        return fut.result()
+
+    async def _async_fetch_full_chain(self, symbol, chain_type, expiry):
+        page = await self._context.new_page()
+        try:
+            await _warm_page(page)
+            return await _fetch_one_expiry(page, symbol, chain_type, expiry)
         finally:
             try:
                 await page.close()

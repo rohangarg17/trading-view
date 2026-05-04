@@ -164,6 +164,72 @@
             border-radius: 6px;
             display: none;
         }
+        /* Collar Analyzer tables */
+        .collar-section { margin-bottom: 18px; }
+        .collar-section h4 {
+            color: #aaa;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+        .collar-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.82rem;
+        }
+        .collar-table th {
+            text-align: right;
+            color: #888;
+            font-weight: 500;
+            padding: 6px 10px;
+            border-bottom: 1px solid #222;
+            white-space: nowrap;
+        }
+        .collar-table th:first-child, .collar-table td:first-child { text-align: left; }
+        .collar-table td {
+            text-align: right;
+            padding: 6px 10px;
+            border-bottom: 1px solid #1e2130;
+            white-space: nowrap;
+        }
+        .collar-table tr.best { background: #0a1a14; }
+        .collar-table tr.best td:first-child { color: #10b981; font-weight: 600; }
+        .collar-strike { color: #60a5fa; font-weight: 600; }
+        .pos { color: #10b981; font-weight: 600; }
+        .neg { color: #ef4444; font-weight: 600; }
+        .collar-table tbody tr { cursor: pointer; }
+        .collar-table tbody tr:hover { background: #1a1d27; }
+        /* Payoff modal */
+        .modal-backdrop {
+            position: fixed; inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: none; align-items: center; justify-content: center;
+            z-index: 100;
+        }
+        .modal-backdrop.open { display: flex; }
+        .modal {
+            background: #161822;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 20px;
+            width: min(720px, 92vw);
+            max-height: 88vh;
+            overflow: auto;
+        }
+        .modal h3 { color: #fff; font-size: 1rem; margin-bottom: 4px; }
+        .modal .modal-meta { color: #888; font-size: 0.82rem; margin-bottom: 12px; }
+        .modal .close-x {
+            float: right; cursor: pointer; color: #888;
+            font-size: 1.3rem; line-height: 1;
+        }
+        .modal .close-x:hover { color: #fff; }
+        .modal .payoff-wrap { height: 340px; position: relative; }
+        .modal .payoff-legend {
+            display: flex; gap: 16px; flex-wrap: wrap;
+            font-size: 0.82rem; color: #aaa; margin-top: 10px;
+        }
+        .modal .payoff-legend .kv { color: #fff; font-weight: 600; }
     </style>
 </head>
 <body>
@@ -235,9 +301,27 @@
 
         <div class="grid">
             <div class="card full">
+                <h3>Collar Analyzer — Sell Call + Buy Stock + Buy Put</h3>
+                <div class="stat-meta" id="collar-meta" style="margin-bottom:10px;"></div>
+                <div id="collar-tables"></div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card full">
                 <h3>Recent News</h3>
                 <div id="news-list"></div>
             </div>
+        </div>
+    </div>
+
+    <div class="modal-backdrop" id="payoff-modal" onclick="if(event.target===this)closePayoff()">
+        <div class="modal">
+            <span class="close-x" onclick="closePayoff()">&times;</span>
+            <h3 id="payoff-title"></h3>
+            <div class="modal-meta" id="payoff-subtitle"></div>
+            <div class="payoff-wrap"><canvas id="payoff-canvas"></canvas></div>
+            <div class="payoff-legend" id="payoff-legend"></div>
         </div>
     </div>
 
@@ -417,6 +501,268 @@
             document.getElementById('forecast-meta').textContent = meta;
         }
 
+        // Shared state for payoff popup — set when renderCollar runs.
+        let COLLAR_SPOT = null;
+        let COLLAR_EXPIRY = null;
+        let COLLAR_DTE = null;
+
+        // innerHTML is safe here: values come from our own server-side JSON
+        // (NSE API → collar_analyzer.analyze), never from user input. Same
+        // pattern as renderIndicators / renderAnalyst above.
+        function renderCollar(data) {
+            const meta = document.getElementById('collar-meta');
+            const tables = document.getElementById('collar-tables');
+            const c = data.collar;
+            if (!c) {
+                meta.innerHTML = '<span class="muted">Collar data unavailable — background refresh may not have run yet.</span>';
+                tables.innerHTML = '';
+                return;
+            }
+            if (c.reason && !c.pair_count) {
+                const exp = c.expiry ? ' · expiry ' + c.expiry : '';
+                const reason = String(c.reason || '').replace(/</g, '&lt;');
+                meta.innerHTML = '<span class="muted">' + reason + exp + '</span>';
+                tables.innerHTML = '';
+                return;
+            }
+            COLLAR_SPOT = c.spot;
+            COLLAR_EXPIRY = c.expiry;
+            COLLAR_DTE = c.days_to_expiry;
+
+            meta.innerHTML =
+                'Expiry <b>' + c.expiry + '</b> (' + c.days_to_expiry + ' days) &nbsp;·&nbsp; ' +
+                'spot ₹' + fmt(c.spot) + ' &nbsp;·&nbsp; ' +
+                'scanning calls within +5% of ATM, puts 3–10% below spot &nbsp;·&nbsp; ' +
+                c.pair_count + ' valid credit pairs &nbsp;·&nbsp; ' +
+                '<span class="muted">click any row for payoff chart</span>';
+
+            const buildTable = (title, rows) => {
+                if (!rows || !rows.length) return '';
+                let html = '<div class="collar-section"><h4>' + title + '</h4>' +
+                    '<table class="collar-table"><thead><tr>' +
+                    '<th>Rank</th><th>Call Strike</th><th>Put Strike</th>' +
+                    '<th>Call Prem</th><th>Put Prem</th><th>Net Credit</th>' +
+                    '<th>Credit %</th><th>Worst %</th><th>Best %</th><th>R/R</th>' +
+                    '</tr></thead><tbody>';
+                rows.forEach((p, i) => {
+                    const cls = i === 0 ? 'best' : '';
+                    const worstCls = p.worst_return_pct >= 0 ? 'pos' : 'neg';
+                    // data-pair holds the pair JSON so the click handler can
+                    // render its payoff without another server call.
+                    const encoded = encodeURIComponent(JSON.stringify(p));
+                    html += '<tr class="' + cls + '" data-pair="' + encoded + '">' +
+                        '<td>#' + (i + 1) + '</td>' +
+                        '<td class="collar-strike">' + fmt(p.call_strike) + '</td>' +
+                        '<td class="collar-strike">' + fmt(p.put_strike) + '</td>' +
+                        '<td>' + fmt(p.call_premium) + '</td>' +
+                        '<td>' + fmt(p.put_premium) + '</td>' +
+                        '<td>' + fmt(p.net_credit) + '</td>' +
+                        '<td class="pos">' + fmt(p.net_credit_pct) + '%</td>' +
+                        '<td class="' + worstCls + '">' + fmt(p.worst_return_pct) + '%</td>' +
+                        '<td class="pos">' + fmt(p.best_return_pct) + '%</td>' +
+                        '<td>' + (p.rr_ratio != null ? fmt(p.rr_ratio) : '∞') + '</td>' +
+                        '</tr>';
+                });
+                html += '</tbody></table></div>';
+                return html;
+            };
+
+            tables.innerHTML =
+                buildTable('Top pairs by worst-case return (safest floor)', c.top_by_worst_case) +
+                buildTable('Top pairs by net credit % (highest flat-market income)', c.top_by_net_credit) +
+                buildTable('Top pairs by reward-to-risk ratio', c.top_by_reward_risk);
+
+            // Single delegated click listener for all collar rows.
+            tables.onclick = (e) => {
+                const tr = e.target.closest('tr[data-pair]');
+                console.log('[collar] click event', {target: e.target, tr});
+                if (!tr) return;
+                let pair;
+                try {
+                    pair = JSON.parse(decodeURIComponent(tr.dataset.pair));
+                } catch (err) {
+                    console.error('[collar] failed to parse pair', err, tr.dataset.pair);
+                    return;
+                }
+                console.log('[collar] opening payoff for pair', pair, 'spot=', COLLAR_SPOT);
+                openPayoff(pair);
+            };
+        }
+
+        // --- Payoff modal ---------------------------------------------------
+        // P&L at expiry for the collar: stock (bought at spot) + short call(K_c) + long put(K_p),
+        // given net credit = call_prem - put_prem.
+        //   PnL(S) = (S - spot)                      // long stock
+        //          - max(S - K_c, 0)                  // short call
+        //          + max(K_p - S, 0)                  // long put
+        //          + net_credit
+        function collarPayoff(S, p) {
+            const stockPnL = S - COLLAR_SPOT;
+            const callPnL = -Math.max(S - p.call_strike, 0);
+            const putPnL = Math.max(p.put_strike - S, 0);
+            return stockPnL + callPnL + putPnL + p.net_credit;
+        }
+
+        let payoffChart = null;
+        function openPayoff(pair) {
+            console.log('[collar] openPayoff start', {pair, spot: COLLAR_SPOT});
+            if (COLLAR_SPOT == null) { console.warn('[collar] COLLAR_SPOT is null, aborting'); return; }
+            const modal = document.getElementById('payoff-modal');
+            // Show the modal FIRST. Canvas rendering below can still throw, but
+            // showing the shell means you'll see an empty chart instead of a
+            // silent no-op and it's obvious something is wrong.
+            modal.classList.add('open');
+            document.getElementById('payoff-title').textContent =
+                SYMBOL + ' collar payoff — Call ' + fmt(pair.call_strike) +
+                ' / Put ' + fmt(pair.put_strike);
+            document.getElementById('payoff-subtitle').textContent =
+                'Expiry ' + COLLAR_EXPIRY + ' (' + COLLAR_DTE + ' days) · ' +
+                'sell call @ ₹' + fmt(pair.call_premium) +
+                ' · buy put @ ₹' + fmt(pair.put_premium) +
+                ' · net credit ₹' + fmt(pair.net_credit);
+
+            // Sweep stock price from spot - 20% to spot + 20%. Wider than
+            // before so the flat put-floor is clearly visible on the left.
+            const lo = COLLAR_SPOT * 0.80;
+            const hi = COLLAR_SPOT * 1.20;
+            const xs = [];
+            const step = (hi - lo) / 100;
+            for (let s = lo; s <= hi + 1e-6; s += step) xs.push(Number(s.toFixed(2)));
+            // Force kink points into the series for crisp corners.
+            [pair.put_strike, pair.call_strike, COLLAR_SPOT].forEach(k => {
+                if (k > lo && k < hi && !xs.includes(k)) xs.push(k);
+            });
+            xs.sort((a, b) => a - b);
+
+            // Two payoff series:
+            //   collarPnL  — your actual hedged position (stock + short call + long put)
+            //   stockOnly  — stock-only P&L with no hedge, for comparison.
+            //                The gap between the two lines at any price is
+            //                exactly what your options legs saved/cost you.
+            const collarData = xs.map(s => ({ x: s, y: collarPayoff(s, pair) }));
+            const stockOnlyData = xs.map(s => ({ x: s, y: s - COLLAR_SPOT }));
+
+            if (payoffChart) payoffChart.destroy();
+            payoffChart = new Chart(document.getElementById('payoff-canvas'), {
+                type: 'line',
+                data: {
+                    datasets: [
+                        {
+                            label: 'Stock only (no hedge)',
+                            data: stockOnlyData,
+                            borderColor: '#6b7280',
+                            backgroundColor: 'transparent',
+                            borderDash: [4, 4],
+                            borderWidth: 1.5,
+                            pointRadius: 0,
+                            parsing: false,
+                        },
+                        {
+                            label: 'Collar P&L',
+                            data: collarData,
+                            borderColor: '#60a5fa',
+                            backgroundColor: (ctx) => {
+                                // Fill green above zero, red below. Using a gradient
+                                // segment pattern keeps a single dataset clean.
+                                const {ctx: c, chartArea} = ctx.chart;
+                                if (!chartArea) return 'rgba(96,165,250,0.15)';
+                                const g = c.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+                                const zeroFrac = ctx.chart.scales.y
+                                    ? (ctx.chart.scales.y.getPixelForValue(0) - chartArea.top) / (chartArea.bottom - chartArea.top)
+                                    : 0.5;
+                                const z = Math.max(0, Math.min(1, zeroFrac));
+                                g.addColorStop(0, 'rgba(16, 185, 129, 0.25)');
+                                g.addColorStop(Math.max(0, z - 0.001), 'rgba(16, 185, 129, 0.25)');
+                                g.addColorStop(Math.min(1, z + 0.001), 'rgba(239, 68, 68, 0.25)');
+                                g.addColorStop(1, 'rgba(239, 68, 68, 0.25)');
+                                return g;
+                            },
+                            fill: { target: { value: 0 } },
+                            borderWidth: 2.5,
+                            pointRadius: 0,
+                            parsing: false,
+                        },
+                    ],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false, axis: 'x' },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'bottom',
+                            labels: { color: '#aaa', usePointStyle: true, font: { size: 11 } },
+                        },
+                        tooltip: {
+                            callbacks: {
+                                title: (items) => {
+                                    // With {x,y} parsed data + linear scale, parsed.x
+                                    // is the real stock price. items[0].label returns
+                                    // a formatted tick string which is unreliable here.
+                                    const x = items.length ? items[0].parsed.x : null;
+                                    return x != null ? 'Stock ₹' + fmt(x) : '';
+                                },
+                                label: (ctx) => {
+                                    const v = ctx.parsed.y;
+                                    if (v == null) return null;
+                                    const pct = (v / COLLAR_SPOT) * 100;
+                                    return ctx.dataset.label + ': ₹' + fmt(v) +
+                                        ' (' + fmt(pct) + '%)';
+                                },
+                            },
+                        },
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            title: { display: true, text: 'Stock price at expiry (₹)', color: '#888' },
+                            ticks: {
+                                color: '#888',
+                                callback: (v) => '₹' + fmt(v),
+                            },
+                            grid: { color: '#1e2130' },
+                        },
+                        y: {
+                            title: { display: true, text: 'P&L per share (₹)', color: '#888' },
+                            ticks: {
+                                color: '#888',
+                                callback: (v) => '₹' + fmt(v),
+                            },
+                            grid: { color: '#1e2130' },
+                        },
+                    },
+                },
+            });
+
+            // Legend with key price anchors (spot, both strikes, breakeven).
+            const bePnL = collarPayoff(COLLAR_SPOT - pair.net_credit, pair);  // not quite right; compute breakeven analytically below
+            // Breakeven on the downside is where stock PnL + net_credit hits put floor.
+            // For strikes K_p <= spot <= K_c, inside the corridor P&L is linear:
+            //   PnL(S) = (S - spot) + net_credit   for S in [K_p, K_c]
+            // Breakeven in this linear segment: S* = spot - net_credit.
+            const breakeven = COLLAR_SPOT - pair.net_credit;
+            const legend = document.getElementById('payoff-legend');
+            legend.innerHTML =
+                'Spot: <span class="kv">₹' + fmt(COLLAR_SPOT) + '</span> &nbsp;·&nbsp; ' +
+                'Put strike (floor): <span class="kv">₹' + fmt(pair.put_strike) + '</span> &nbsp;·&nbsp; ' +
+                'Call strike (cap): <span class="kv">₹' + fmt(pair.call_strike) + '</span> &nbsp;·&nbsp; ' +
+                'Breakeven: <span class="kv">₹' + fmt(breakeven) + '</span> &nbsp;·&nbsp; ' +
+                'Max profit: <span class="kv pos">₹' + fmt(pair.max_profit) +
+                ' (' + fmt(pair.best_return_pct) + '%)</span> &nbsp;·&nbsp; ' +
+                'Max loss: <span class="kv neg">₹' + fmt(pair.max_loss) +
+                ' (' + fmt(pair.worst_return_pct) + '%)</span>';
+        }
+
+        function closePayoff() {
+            document.getElementById('payoff-modal').classList.remove('open');
+        }
+        window.closePayoff = closePayoff;
+        // ESC closes the modal.
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closePayoff();
+        });
+
         function renderNews(data) {
             const el = document.getElementById('news-list');
             if (!data.news || !data.news.length) {
@@ -457,6 +803,7 @@
                 renderPriceChart(json);
                 renderForecastChart(json);
                 renderNews(json);
+                renderCollar(json);
                 renderImpliedMove(json);  // async, fine to fire-and-forget
 
                 content.style.display = 'block';
