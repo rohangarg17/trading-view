@@ -144,6 +144,45 @@ async ({symbol, chainType, expiry}) => {
 """
 
 
+# JS that fetches the all-indices snapshot. NSE removed the per-equity
+# /api/equity-stockIndices endpoint (now 404s from every client), but
+# /api/allIndices still returns every index's last price. We get equity LTPs
+# from each option chain's underlyingValue instead.
+_FETCH_INDICES_JS = """
+async () => {
+    const r = await fetch('/api/allIndices');
+    const j = await r.json();
+    const out = {};
+    for (const row of ((j && j.data) || [])) {
+        if (row.index && row.last != null) out[row.index] = row.last;
+    }
+    return out;
+}
+"""
+
+
+async def _fetch_all_indices(page):
+    """Return {index_name: last_price} from /api/allIndices, or {} on failure."""
+    for attempt in range(2):
+        try:
+            res = await page.evaluate(_FETCH_INDICES_JS)
+            if res:
+                return res
+            if attempt == 0:
+                await _warm_page(page)
+                continue
+            return {}
+        except Exception:
+            if attempt == 0:
+                try:
+                    await _warm_page(page)
+                except Exception:
+                    return {}
+                continue
+            return {}
+    return {}
+
+
 async def _fetch_one_expiry(page, symbol, chain_type, expiry):
     """Fetch all strikes for one specific expiry. Used by the collar analyzer."""
     for attempt in range(2):
@@ -264,6 +303,28 @@ class NSEBrowser:
         try:
             await _warm_page(page)
             return await _fetch_one(page, symbol, chain_type, max_expiries)
+        finally:
+            try:
+                await page.close()
+            except Exception:
+                pass
+
+    def fetch_index_prices(self):
+        """Blocking fetch of {index_name: last_price} via /api/allIndices.
+
+        Opens & closes a throwaway page. Used for index-row LTPs; equity LTPs
+        come from each chain's underlyingValue.
+        """
+        fut = asyncio.run_coroutine_threadsafe(
+            self._async_fetch_index_prices(), self._loop,
+        )
+        return fut.result()
+
+    async def _async_fetch_index_prices(self):
+        page = await self._context.new_page()
+        try:
+            await _warm_page(page)
+            return await _fetch_all_indices(page)
         finally:
             try:
                 await page.close()

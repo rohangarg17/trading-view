@@ -288,11 +288,26 @@ def _refresh_once(browser, concurrency):
 
     Dispatches the whole universe to browser.fetch_chains_concurrent, which
     runs N fetches in parallel across N warmed pages sharing one context.
+
+    Price sourcing (NSE removed /api/equity-stockIndices — see nse_playwright):
+      - Index rows: LTP from /api/allIndices (via the browser, same-origin).
+      - Equity rows: the universe comes from the F&O CSV; each row's LTP is
+        derived from its own option chain's underlyingValue.
     """
-    nse = NSELive()
-    equity_prices = _get_equity_prices(nse)
-    index_prices = _get_index_prices(nse)
-    if not equity_prices and not index_prices:
+    # Index LTPs come from /api/allIndices through the browser (the raw NSELive
+    # HTTP path is now blocked). Map our option-chain symbols to index names.
+    all_index_prices = browser.fetch_index_prices()
+    index_prices = {}
+    for oc_symbol, src_name in INDEX_LTP_SOURCE.items():
+        ltp = all_index_prices.get(src_name)
+        if ltp:
+            index_prices[oc_symbol] = float(str(ltp).replace(",", ""))
+
+    # Equity universe = F&O-enabled symbols from the CSV. LTP is filled later
+    # from each chain's underlyingValue, so seed it as None for now.
+    fo_symbols = _fetch_fo_symbol_list() or set()
+
+    if not fo_symbols and not index_prices:
         return None  # Can't build anything useful
 
     # Build task list. Each task is (symbol, chain_type, max_expiries, key)
@@ -302,8 +317,8 @@ def _refresh_once(browser, concurrency):
         max_exp = 6 if sym == "NIFTY" else 4
         key = {"symbol": sym, "type": "index", "ltp": index_prices[sym]}
         tasks.append((sym, "Indices", max_exp, key))
-    for sym in sorted(equity_prices.keys()):
-        key = {"symbol": sym, "type": "equity", "ltp": equity_prices[sym]}
+    for sym in sorted(fo_symbols):
+        key = {"symbol": sym, "type": "equity", "ltp": None}
         tasks.append((sym, "Equity", 4, key))
 
     fetched = browser.fetch_chains_concurrent(tasks, concurrency=concurrency)
@@ -316,6 +331,20 @@ def _refresh_once(browser, concurrency):
     for key, records in fetched:
         sym = key["symbol"]
         ltp = key["ltp"]
+        # Equity rows have no pre-fetched LTP — take it from the chain's
+        # underlyingValue (NSE no longer exposes a per-stock price endpoint).
+        if ltp is None and records:
+            underlying = records.get("underlyingValue")
+            if isinstance(underlying, str):
+                try:
+                    underlying = float(underlying.replace(",", ""))
+                except ValueError:
+                    underlying = None
+            ltp = underlying
+        if ltp is None:
+            # No price and (for equities) no chain to derive one — skip the row.
+            errors.append(f"{sym}: no price (chain empty)")
+            continue
         row = {
             "symbol": sym,
             "type": key["type"],
