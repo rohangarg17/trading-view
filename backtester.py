@@ -13,6 +13,13 @@ YAHOO_SYMBOL_MAP = {
     "M&M": "M%26M.NS",
     "BAJAJ-AUTO": "BAJAJ-AUTO.NS",
     "NIFTY 50": "^NSEI",
+    # Index option-chain symbols used by the live dashboard
+    "NIFTY": "^NSEI",
+    "BANKNIFTY": "^NSEBANK",
+    "NIFTYNXT50": "^NSMIDCP",
+    # Yahoo only carries today's bar for these two (no history)
+    "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
+    "MIDCPNIFTY": "NIFTY_MID_SELECT.NS",
 }
 
 

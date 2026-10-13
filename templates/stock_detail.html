@@ -140,6 +140,17 @@
             height: 320px;
             position: relative;
         }
+        #expiry-select {
+            background: #1a1d27;
+            color: #e0e0e0;
+            border: 1px solid #333;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            margin-top: 4px;
+        }
+        .indicator-row.selected-expiry .label { color: #60a5fa; font-weight: 600; }
         .full { grid-column: 1 / -1; }
         .muted { color: #666; font-style: italic; font-size: 0.85rem; }
         #loading { text-align: center; padding: 60px; color: #888; }
@@ -265,6 +276,10 @@
                 <div class="big-stat" id="volume-ratio"></div>
                 <div class="stat-meta" id="volume-meta"></div>
             </div>
+            <div>
+                <div class="meta">Option expiry</div>
+                <select id="expiry-select" disabled><option>Loading...</option></select>
+            </div>
         </div>
 
         <div class="grid">
@@ -327,6 +342,9 @@
 
     <script>
         const SYMBOL = "{{ symbol }}";
+        // Seeded from ?expiry= (the list view passes its selection); the
+        // server falls back to a 20-40 day expiry if absent/unknown.
+        let SELECTED_EXPIRY = new URLSearchParams(location.search).get('expiry');
         const SIGNAL_CLASS = {
             buy: 'buy', sell: 'sell', neutral: 'neutral',
             bullish: 'bullish', bearish: 'bearish',
@@ -420,12 +438,12 @@
                     return;
                 }
                 let html = '';
-                stock.expiries.slice(0, 3).forEach(e => {
+                stock.expiries.forEach(e => {
                     const move = (e.total_premium / stock.ltp) * 100;
                     const lower = stock.ltp - e.total_premium;
                     const upper = stock.ltp + e.total_premium;
                     html += `
-                        <div class="indicator-row">
+                        <div class="indicator-row" data-expiry="${e.expiry}">
                             <span class="label">${e.expiry}</span>
                             <span>
                                 <span class="value">±${fmt(move, 2)}%</span>
@@ -435,8 +453,74 @@
                     `;
                 });
                 el.innerHTML = html;
+                highlightImpliedMove();
             } catch (e) {
                 el.innerHTML = '<div class="muted">Could not load option data.</div>';
+            }
+        }
+
+        function highlightImpliedMove() {
+            document.querySelectorAll('#implied-move-block .indicator-row').forEach(row => {
+                row.classList.toggle('selected-expiry', row.dataset.expiry === SELECTED_EXPIRY);
+            });
+        }
+
+        function daysTo(expiry) {
+            // NSE format 'DD-MMM-YYYY'. Parse by hand — Date() string parsing
+            // of non-ISO formats differs across browsers.
+            const [dd, mon, yyyy] = expiry.split('-');
+            const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].indexOf(mon);
+            if (m < 0) return null;
+            const d = new Date(Number(yyyy), m, Number(dd));
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            return Math.round((d - today) / 86400000);
+        }
+
+        function renderExpirySelect(collar) {
+            const sel = document.getElementById('expiry-select');
+            const expiries = (collar && collar.available_expiries) || [];
+            sel.innerHTML = '';
+            if (!expiries.length) {
+                sel.innerHTML = '<option>No expiries</option>';
+                sel.disabled = true;
+                return;
+            }
+            SELECTED_EXPIRY = collar.expiry;
+            expiries.forEach(exp => {
+                const opt = document.createElement('option');
+                const dte = daysTo(exp);
+                opt.value = exp;
+                opt.textContent = dte != null ? `${exp} (${dte}d)` : exp;
+                opt.selected = exp === SELECTED_EXPIRY;
+                sel.appendChild(opt);
+            });
+            sel.disabled = false;
+            sel.onchange = () => changeExpiry(sel.value);
+        }
+
+        let collarRequestId = 0;
+        async function changeExpiry(expiry) {
+            SELECTED_EXPIRY = expiry;
+            const url = new URL(location.href);
+            url.searchParams.set('expiry', expiry);
+            history.replaceState(null, '', url);
+            highlightImpliedMove();
+
+            const reqId = ++collarRequestId;
+            document.getElementById('collar-meta').innerHTML =
+                '<span class="spinner"></span>Loading collar for ' + expiry + '...';
+            document.getElementById('collar-tables').innerHTML = '';
+            try {
+                const resp = await fetch(`/api/stock/${encodeURIComponent(SYMBOL)}/collar?expiry=${encodeURIComponent(expiry)}`);
+                const json = await resp.json();
+                if (reqId !== collarRequestId) return;  // a newer selection superseded this one
+                if (json.status !== 'success') throw new Error(json.message || 'Unknown error');
+                renderCollar({ collar: json.collar });
+            } catch (e) {
+                if (reqId !== collarRequestId) return;
+                document.getElementById('collar-meta').innerHTML =
+                    '<span class="muted">Could not load collar: ' + String(e.message).replace(/</g, '&lt;') + '</span>';
             }
         }
 
@@ -533,6 +617,7 @@
                 'Expiry <b>' + c.expiry + '</b> (' + c.days_to_expiry + ' days) &nbsp;·&nbsp; ' +
                 'spot ₹' + fmt(c.spot) + ' &nbsp;·&nbsp; ' +
                 'scanning calls within +5% of ATM, puts 3–10% below spot &nbsp;·&nbsp; ' +
+                'premiums = LTP, or bid/ask mid if untraded today &nbsp;·&nbsp; ' +
                 c.pair_count + ' valid credit pairs &nbsp;·&nbsp; ' +
                 '<span class="muted">click any row for payoff chart</span>';
 
@@ -782,7 +867,8 @@
             const err = document.getElementById('error');
             const content = document.getElementById('content');
             try {
-                const resp = await fetch(`/api/stock/${encodeURIComponent(SYMBOL)}`);
+                const qs = SELECTED_EXPIRY ? `?expiry=${encodeURIComponent(SELECTED_EXPIRY)}` : '';
+                const resp = await fetch(`/api/stock/${encodeURIComponent(SYMBOL)}${qs}`);
                 const json = await resp.json();
                 if (json.status !== 'success') throw new Error(json.message || 'Unknown error');
 
@@ -804,6 +890,7 @@
                 renderForecastChart(json);
                 renderNews(json);
                 renderCollar(json);
+                renderExpirySelect(json.collar);  // sets SELECTED_EXPIRY before implied-move highlights
                 renderImpliedMove(json);  // async, fine to fire-and-forget
 
                 content.style.display = 'block';

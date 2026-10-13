@@ -75,6 +75,23 @@ def pick_target_expiry(expiry_dates, today=None):
     return candidates[0]
 
 
+def _option_price(leg):
+    """LTP if the strike traded today, else bid/ask mid.
+
+    NSE reports lastPrice=0 for any strike with no trade yet today, even when
+    there's a live two-sided quote. Away-from-ATM strikes in the put window
+    are often untraded, so LTP-only pricing leaves the scan window empty.
+    """
+    ltp = leg.get("lastPrice") or 0
+    if ltp > 0:
+        return ltp
+    bid = leg.get("buyPrice1") or 0
+    ask = leg.get("sellPrice1") or 0
+    if bid > 0 and ask > 0:
+        return round((bid + ask) / 2, 2)
+    return 0
+
+
 def _build_strike_tables(records, target_expiry):
     """From NSE records.data, extract {strike: price} dicts for calls & puts
     at the target expiry only.
@@ -90,8 +107,8 @@ def _build_strike_tables(records, target_expiry):
             continue
         ce = row.get("CE") or {}
         pe = row.get("PE") or {}
-        ce_price = ce.get("lastPrice") or 0
-        pe_price = pe.get("lastPrice") or 0
+        ce_price = _option_price(ce)
+        pe_price = _option_price(pe)
         if ce_price > 0:
             calls[strike] = ce_price
         if pe_price > 0:
@@ -123,8 +140,11 @@ def _eval_pair(spot, k_call, call_prem, k_put, put_prem):
     }
 
 
-def analyze(records, spot, top_n=5):
+def analyze(records, spot, expiry=None, top_n=5):
     """Main entrypoint: given NSE records + spot price, return analyzer output.
+
+    If `expiry` is given it is used as-is (user picked it); otherwise one is
+    chosen from records.expiryDates via pick_target_expiry.
 
     Returns dict shaped for the UI:
       {
@@ -146,7 +166,11 @@ def analyze(records, spot, top_n=5):
     if not records or not spot or spot <= 0:
         return empty
 
-    expiry, dte = pick_target_expiry(records.get("expiryDates", []))
+    if expiry:
+        d = _parse_nse_date(expiry)
+        dte = (d - datetime.now().date()).days if d else None
+    else:
+        expiry, dte = pick_target_expiry(records.get("expiryDates", []))
     if not expiry:
         return empty
 

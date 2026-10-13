@@ -357,7 +357,11 @@
                         row += '<td>-</td><td>-</td><td>-</td>';
                     }
                 }
-                row += `<td><a href="/stock/${encodeURIComponent(stock.symbol)}">View →</a></td>`;
+                // Carry the selected expiry over as the details page's default,
+                // but only if this row trades it (index weeklies vs stock monthlies).
+                const carryExp = stock.expiries.some(e => e.expiry === sortExp);
+                const expQs = carryExp ? `?expiry=${encodeURIComponent(sortExp)}` : '';
+                row += `<td><a href="/stock/${encodeURIComponent(stock.symbol)}${expQs}">View →</a></td>`;
                 const tr = document.createElement('tr');
                 tr.innerHTML = row;
                 tbody.appendChild(tr);

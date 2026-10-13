@@ -1,24 +1,31 @@
 """Orchestrator for the per-stock details page.
 
 Pulls OHLCV via backtester.fetch_history, computes technical indicators,
-and layers on yfinance .info / .recommendations / .news. Each section is
+and layers on yfinance .info / .recommendations, plus news (yfinance, with
+a Google News RSS fallback). Each section is
 best-effort: a failure in one section returns a null slot rather than
 breaking the whole payload.
 """
 
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
+import requests
 import yfinance as yf
 
 from backtester import fetch_history, YAHOO_SYMBOL_MAP
 from pricing import historical_volatility
 from indicators import rsi, macd, sma, bollinger, atr, monte_carlo_cone
-from collar_analyzer import analyze as analyze_collar, pick_target_expiry
+from collar_analyzer import analyze as analyze_collar, pick_target_expiry, _parse_nse_date
 
 
 _CACHE = {}
+_COLLAR_CACHE = {}
 _CACHE_TTL_SEC = 60
+
+GOOGLE_NEWS_RSS = "https://news.google.com/rss/search"
 
 
 def _yahoo_symbol(symbol):
@@ -132,6 +139,60 @@ def _news(ticker, limit=5):
     return out
 
 
+def _news_query(symbol, ticker):
+    """Company name makes a far better news query than a bare ticker
+    ("BEL", "ABB" match all sorts of noise). `.info` is already fetched
+    for the analyst block, so this is free."""
+    try:
+        info = ticker.info or {}
+    except Exception:
+        info = {}
+    # longName first: Yahoo truncates NSE shortNames ("HDFC ASSET MANAGEMENT COM")
+    name = info.get("longName") or info.get("shortName") or symbol
+    for suffix in (" Limited", " Ltd.", " Ltd"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+    return f'"{name.strip()}"'
+
+
+def _google_news(query, limit=5):
+    """Fallback news source: Google News RSS (free, no key).
+
+    yfinance's news endpoint (finance.yahoo.com/xhr/ncp) now 404s and
+    yfinance swallows that into an empty list, so this is the live path.
+    """
+    try:
+        resp = requests.get(
+            GOOGLE_NEWS_RSS,
+            params={"q": f"{query} when:30d", "hl": "en-IN", "gl": "IN", "ceid": "IN:en"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+    except Exception:
+        return []
+    out = []
+    for item in root.iter("item"):
+        title = (item.findtext("title") or "").strip()
+        link = (item.findtext("link") or "").strip()
+        publisher = (item.findtext("source") or "").strip() or None
+        # Google appends " - Publisher" to every title; drop it since we
+        # show the publisher separately.
+        if publisher and title.endswith(" - " + publisher):
+            title = title[: -len(publisher) - 3]
+        ts = None
+        try:
+            ts = int(parsedate_to_datetime(item.findtext("pubDate")).timestamp())
+        except (TypeError, ValueError):
+            pass
+        if title and link:
+            out.append({"title": title, "link": link, "publisher": publisher, "publish_ts": ts})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _build_indicators(data):
     closes = data["closes"]
     highs = data["highs"]
@@ -202,46 +263,54 @@ def _price_summary(data):
     }
 
 
-def _collar(symbol, spot):
+def _collar(symbol, spot, expiry=None):
     """Run the collar analyzer for this stock using the background NSEBrowser.
 
-    Picks an expiry in the 20-40 day window, fetches its full option chain,
-    then runs collar_analyzer.analyze. Returns None if the browser isn't up
-    yet or NSE returned nothing usable — the UI shows a graceful empty state.
+    Uses `expiry` if it's one this symbol trades, otherwise picks one in the
+    20-40 day window. Fetches that expiry's full option chain, then runs
+    collar_analyzer.analyze. Every return carries `available_expiries` so the
+    UI can render its expiry dropdown even when analysis fails.
     """
     try:
         from nse_provider import get_shared_browser, _snapshot, _snapshot_lock
     except Exception:
         return None
-    browser = get_shared_browser()
-    if browser is None:
-        return {"reason": "option-chain browser not ready yet — refresh in a minute"}
 
     # The background snapshot already tells us which expiries exist for this
     # symbol. No need to re-probe NSE just to learn expiry dates.
     with _snapshot_lock:
         snap = _snapshot
-    expiry_str = None
+    expiries = []
     chain_type = "Equity"
     if snap:
         for row in snap.get("data", []):
             if row.get("symbol") == symbol:
                 expiries = [e["expiry"] for e in row.get("expiries", [])]
-                expiry_str, _ = pick_target_expiry(expiries)
                 if row.get("type") == "index":
                     chain_type = "Indices"
                 break
-    if not expiry_str:
-        return {"reason": "no suitable 20-40 day expiry found for this symbol"}
+    # The snapshot drops expiries whose ATM strike hasn't traded today, so a
+    # requested expiry may be real even if it's not listed there.
+    if not _parse_nse_date(expiry):
+        expiry, _ = pick_target_expiry(expiries)
+
+    base = {"available_expiries": expiries, "expiry": expiry}
+    browser = get_shared_browser()
+    if browser is None:
+        return {**base, "reason": "option-chain browser not ready yet — refresh in a minute"}
+    if not expiry:
+        return {**base, "reason": "no option expiries available for this symbol"}
 
     try:
-        records = browser.fetch_full_chain(symbol, expiry_str, chain_type=chain_type)
+        records = browser.fetch_full_chain(symbol, expiry, chain_type=chain_type)
     except Exception as e:
-        return {"reason": f"chain fetch failed: {type(e).__name__}"}
+        return {**base, "reason": f"chain fetch failed: {type(e).__name__}"}
     if not records:
-        return {"reason": f"NSE returned empty chain for {expiry_str}"}
+        return {**base, "reason": f"NSE returned empty chain for {expiry}"}
 
-    return analyze_collar(records, spot=spot, top_n=5)
+    # The chain response carries NSE's full expiry list for this symbol.
+    return {**analyze_collar(records, spot=spot, expiry=expiry, top_n=5),
+            "available_expiries": records.get("expiryDates") or expiries}
 
 
 def _forecast(data, analyst):
@@ -262,8 +331,28 @@ def _forecast(data, analyst):
     }
 
 
-def fetch_details(symbol):
+def fetch_collar(symbol, expiry=None):
+    """Collar analysis for one expiry. Cached per (symbol, expiry) so flipping
+    the expiry dropdown back and forth doesn't re-hit NSE."""
+    now = time.time()
+    key = (symbol, expiry)
+    cached = _COLLAR_CACHE.get(key)
+    if cached and now - cached["ts"] < _CACHE_TTL_SEC:
+        return cached["payload"]
+    spot = _base_details(symbol)["price"]["last"]
+    payload = _collar(symbol, spot, expiry)
+    _COLLAR_CACHE[key] = {"ts": now, "payload": payload}
+    return payload
+
+
+def fetch_details(symbol, expiry=None):
     """Fetch all data needed to render the stock details page."""
+    base = _base_details(symbol)
+    return {**base, "collar": fetch_collar(symbol, expiry)}
+
+
+def _base_details(symbol):
+    """Everything on the details page except the expiry-dependent collar."""
     now = time.time()
     cached = _CACHE.get(symbol)
     if cached and now - cached["ts"] < _CACHE_TTL_SEC:
@@ -279,7 +368,6 @@ def fetch_details(symbol):
     analyst = _analyst_data(ticker)
     price = _price_summary(data)
     forecast = _forecast(data, analyst)
-    collar = _collar(symbol, price["last"])
 
     payload = {
         "status": "success",
@@ -288,9 +376,8 @@ def fetch_details(symbol):
         "indicators": indicators_block,
         "analyst": analyst,
         "recommendations": _recommendations(ticker),
-        "news": _news(ticker),
+        "news": _news(ticker) or _google_news(_news_query(symbol, ticker)),
         "forecast": forecast,
-        "collar": collar,
         "price_history": {
             "dates": data["dates"][-252:],
             "closes": [round(c, 2) for c in data["closes"][-252:]],

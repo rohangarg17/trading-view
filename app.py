@@ -51,7 +51,17 @@ def stock_detail_page(symbol):
 def stock_detail_api(symbol):
     try:
         from stock_detail import fetch_details
-        return jsonify(fetch_details(symbol.upper()))
+        return jsonify(fetch_details(symbol.upper(), request.args.get("expiry")))
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/stock/<symbol>/collar")
+def stock_collar_api(symbol):
+    try:
+        from stock_detail import fetch_collar
+        return jsonify({"status": "success",
+                        "collar": fetch_collar(symbol.upper(), request.args.get("expiry"))})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
